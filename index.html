@@ -363,6 +363,8 @@
           <option value="bunch">bunch</option>
           <option value="kg">kg</option>
           <option value="l">litre</option>
+          <option value="lb">lb (pound)</option>
+          <option value="oz">oz (ounce)</option>
         </select>
       </div>
       <div class="field"><label>Category</label>
@@ -430,6 +432,8 @@
           <option value="bottle">bottle</option>
           <option value="bunch">bunch</option>
           <option value="qb">qb (quanto basta)</option>
+          <option value="lb">lb (pound → converts to g)</option>
+          <option value="oz">oz (ounce → converts to g)</option>
         </select>
       </div>
       <div class="field field-span2" style="background:var(--teal-lt);padding:0.65rem;border-radius:6px">
@@ -878,18 +882,23 @@ function pricesPage() {
 }
 
 function calcPricePerUnit() {
-  const purchase = parseFloat(document.getElementById('p-purchase-price').value);
-  const qty = parseFloat(document.getElementById('p-package-qty').value);
-  const unit = document.getElementById('p-package-unit').value;
-  const display = document.getElementById('p-price-display');
-  const hidden = document.getElementById('p-price');
+  const purchase = parseFloat(document.getElementById("p-purchase-price").value);
+  const qty = parseFloat(document.getElementById("p-package-qty").value);
+  const unit = document.getElementById("p-package-unit").value;
+  const display = document.getElementById("p-price-display");
+  const hidden = document.getElementById("p-price");
   if (!isNaN(purchase) && !isNaN(qty) && qty > 0) {
-    const ppu = purchase / qty;
+    let qtyInBase = qty;
+    let baseUnit = unit;
+    let convNote = "";
+    if (unit === "lb") { qtyInBase = qty * 453.592; baseUnit = "g"; convNote = " (" + qty + "lb = " + qtyInBase.toFixed(1) + "g)"; }
+    else if (unit === "oz") { qtyInBase = qty * 28.3495; baseUnit = "g"; convNote = " (" + qty + "oz = " + qtyInBase.toFixed(1) + "g)"; }
+    const ppu = purchase / qtyInBase;
     hidden.value = ppu;
-    display.textContent = `$${ppu.toFixed(4)} per ${unit}  (= $${purchase.toFixed(2)} for ${qty}${unit})`;
+    display.innerHTML = "$" + ppu.toFixed(4) + " per " + baseUnit + convNote + "<br><small style='opacity:0.8'>= $" + purchase.toFixed(2) + " for " + qty + unit + "</small>";
   } else {
-    hidden.value = '';
-    display.textContent = '— enter price and quantity above';
+    hidden.value = "";
+    display.textContent = "— enter price and quantity above";
   }
 }
 
