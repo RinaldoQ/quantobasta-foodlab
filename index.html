@@ -713,20 +713,29 @@ function dashboard() {
 }
 
 // ══ VENDORS ══════════════════════════════════════════════════════════════════
-function vendorsPage() {
+function vendorsPage(filter='') {
   const m = document.getElementById('main-content');
+  const filtered = state.vendors.filter(v =>
+    v.name.toLowerCase().includes(filter.toLowerCase()) ||
+    (v.location||'').toLowerCase().includes(filter.toLowerCase())
+  );
   m.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Vendors</div><div class="page-subtitle">Manage your ingredient suppliers</div></div>
       <button class="btn btn-primary" onclick="openVendorModal()">+ Add Vendor</button>
     </div>
     <div class="card">
+      <div style="margin-bottom:0.75rem">
+        <input type="text" placeholder="🔍 Search vendors…" value="${filter}"
+          oninput="vendorsPage(this.value)"
+          style="width:100%;padding:0.45rem 0.65rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.85rem;">
+      </div>
       <table class="tbl">
         <thead><tr><th>Name</th><th>Location</th><th>Notes</th><th>Actions</th></tr></thead>
         <tbody>
-          ${state.vendors.length === 0
-            ? `<tr><td colspan="4" style="text-align:center;padding:2rem;color:var(--gray)">No vendors yet — add your first supplier</td></tr>`
-            : state.vendors.map(v => `
+          ${filtered.length === 0
+            ? `<tr><td colspan="4" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No vendors match your search' : 'No vendors yet — add your first supplier'}</td></tr>`
+            : filtered.map(v => `
                 <tr>
                   <td><strong>${v.name}</strong></td>
                   <td>${v.location || '—'}</td>
@@ -776,20 +785,29 @@ async function deleteVendor(id) {
 }
 
 // ══ INGREDIENTS ═══════════════════════════════════════════════════════════════
-function ingredientsPage() {
+function ingredientsPage(filter='') {
   const m = document.getElementById('main-content');
+  const filtered = state.ingredients.filter(i =>
+    i.name.toLowerCase().includes(filter.toLowerCase()) ||
+    (i.category||'').toLowerCase().includes(filter.toLowerCase())
+  );
   m.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Ingredients</div><div class="page-subtitle">Master ingredient list</div></div>
       <button class="btn btn-primary" onclick="openIngModal()">+ Add Ingredient</button>
     </div>
     <div class="card">
+      <div style="margin-bottom:0.75rem">
+        <input type="text" placeholder="🔍 Search ingredients…" value="${filter}"
+          oninput="ingredientsPage(this.value)"
+          style="width:100%;padding:0.45rem 0.65rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.85rem;">
+      </div>
       <table class="tbl">
         <thead><tr><th>Name</th><th>Unit</th><th>Category</th><th>No-Scale</th><th>Actions</th></tr></thead>
         <tbody>
-          ${state.ingredients.length === 0
-            ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--gray)">No ingredients yet</td></tr>`
-            : state.ingredients.map(i => `
+          ${filtered.length === 0
+            ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No ingredients match your search' : 'No ingredients yet'}</td></tr>`
+            : filtered.map(i => `
                 <tr>
                   <td><strong>${i.name}</strong>${i.notes ? `<div class="text-gray">${i.notes}</div>` : ''}</td>
                   <td><span class="badge badge-gray">${i.unit}</span></td>
@@ -848,30 +866,40 @@ async function deleteIngredient(id) {
 }
 
 // ══ PRICES ═══════════════════════════════════════════════════════════════════
-function pricesPage() {
+function pricesPage(filter='') {
   const m = document.getElementById('main-content');
+  const filtered = state.prices.filter(p =>
+    (p.ingredients?.name||'').toLowerCase().includes(filter.toLowerCase()) ||
+    (p.vendors?.name||'').toLowerCase().includes(filter.toLowerCase())
+  );
   m.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Vendor Prices</div><div class="page-subtitle">Indicative pricing — R&D stage</div></div>
       <button class="btn btn-primary" onclick="openPriceModal()">+ Add Price</button>
     </div>
     <div class="card">
+      <div style="margin-bottom:0.75rem">
+        <input type="text" placeholder="🔍 Search by ingredient or vendor…" value="${filter}"
+          oninput="pricesPage(this.value)"
+          style="width:100%;padding:0.45rem 0.65rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.85rem;">
+      </div>
       <table class="tbl">
         <thead><tr><th>Ingredient</th><th>Vendor</th><th>Package</th><th>Purchase Price</th><th>Price / Unit</th><th>Date</th><th>Active</th><th>Notes</th><th>Actions</th></tr></thead>
         <tbody>
-          ${state.prices.length === 0
-            ? `<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--gray)">No prices yet — add your first price entry</td></tr>`
-            : state.prices.map(p => `
+          ${filtered.length === 0
+            ? `<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No prices match your search' : 'No prices yet — add your first price entry'}</td></tr>`
+            : filtered.map(p => `
                 <tr>
                   <td><strong>${p.ingredients?.name || '—'}</strong> <span class="badge badge-gray">${p.ingredients?.unit || ''}</span></td>
                   <td>${p.vendors?.name || '—'}</td>
                   <td class="text-gray">${p.package_qty ? p.package_qty + ' ' + (p.package_unit || '') : '—'}</td>
                   <td class="qty-cell">${p.purchase_price ? '$' + parseFloat(p.purchase_price).toFixed(2) : '—'}</td>
-                  <td class="qty-cell">${p.price_per_unit ? '$' + parseFloat(p.price_per_unit).toFixed(4) + '/' + (p.package_unit || 'unit') : '—'}</td>
+                  <td class="qty-cell">${p.price_per_unit ? '$' + parseFloat(p.price_per_unit).toFixed(4) + '/' + (p.package_unit === 'lb' || p.package_unit === 'oz' ? 'g' : p.package_unit || 'unit') : '—'}</td>
                   <td class="text-gray">${p.price_date || '—'}</td>
                   <td>${p.is_active ? '<span class="badge badge-teal">Active</span>' : '<span class="badge badge-gray">Inactive</span>'}</td>
                   <td class="text-gray">${p.notes || '—'}</td>
                   <td>
+                    <button class="btn btn-secondary btn-sm" onclick="editPrice('${p.id}')">Edit</button>
                     <button class="btn btn-danger btn-sm" onclick="deletePrice('${p.id}')">Delete</button>
                   </td>
                 </tr>`).join('')
@@ -903,6 +931,7 @@ function calcPricePerUnit() {
 }
 
 function openPriceModal() {
+  state.editId = null;
   const vSel = document.getElementById('p-vendor');
   const iSel = document.getElementById('p-ingredient');
   vSel.innerHTML = '<option value="">— select vendor —</option>' + state.vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
@@ -928,18 +957,34 @@ async function savePrice() {
   const pricePerUnit = parseFloat(document.getElementById('p-price').value);
   if (isNaN(purchasePrice)) return toast('Purchase price is required', 'error');
   if (isNaN(packageQty) || packageQty <= 0) return toast('Package quantity is required', 'error');
-  await sb.from('vendor_prices').insert({
-    vendor_id: vendorId,
-    ingredient_id: ingredientId,
-    purchase_price: purchasePrice,
-    package_qty: packageQty,
-    package_unit: document.getElementById('p-package-unit').value,
-    price_per_unit: pricePerUnit,
-    price_date: document.getElementById('p-date').value,
-    is_active: document.getElementById('p-active').checked,
-    notes: document.getElementById('p-notes').value || null,
-  });
-  toast('Price saved', 'success');
+  if (state.editId) {
+    await sb.from('vendor_prices').update({
+      vendor_id: vendorId,
+      ingredient_id: ingredientId,
+      purchase_price: purchasePrice,
+      package_qty: packageQty,
+      package_unit: document.getElementById('p-package-unit').value,
+      price_per_unit: pricePerUnit,
+      price_date: document.getElementById('p-date').value,
+      is_active: document.getElementById('p-active').checked,
+      notes: document.getElementById('p-notes').value || null,
+    }).eq('id', state.editId);
+    toast('Price updated', 'success');
+  } else {
+    await sb.from('vendor_prices').insert({
+      vendor_id: vendorId,
+      ingredient_id: ingredientId,
+      purchase_price: purchasePrice,
+      package_qty: packageQty,
+      package_unit: document.getElementById('p-package-unit').value,
+      price_per_unit: pricePerUnit,
+      price_date: document.getElementById('p-date').value,
+      is_active: document.getElementById('p-active').checked,
+      notes: document.getElementById('p-notes').value || null,
+    });
+    toast('Price saved', 'success');
+  }
+  state.editId = null;
   closeModal('modal-price');
   await loadPrices(); pricesPage();
 }
@@ -949,6 +994,26 @@ async function deletePrice(id) {
   await sb.from('vendor_prices').delete().eq('id', id);
   await loadPrices(); pricesPage();
   toast('Price deleted');
+}
+
+function editPrice(id) {
+  const p = state.prices.find(x => x.id === id);
+  if (!p) return;
+  state.editId = id;
+  const vSel = document.getElementById('p-vendor');
+  const iSel = document.getElementById('p-ingredient');
+  vSel.innerHTML = '<option value="">— select vendor —</option>' + state.vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
+  iSel.innerHTML = '<option value="">— select ingredient —</option>' + state.ingredients.map(i => `<option value="${i.id}">${i.name} (${i.unit})</option>`).join('');
+  vSel.value = p.vendor_id || '';
+  iSel.value = p.ingredient_id || '';
+  document.getElementById('p-purchase-price').value = p.purchase_price || '';
+  document.getElementById('p-package-qty').value = p.package_qty || '';
+  document.getElementById('p-package-unit').value = p.package_unit || 'g';
+  document.getElementById('p-notes').value = p.notes || '';
+  document.getElementById('p-date').value = p.price_date || new Date().toISOString().split('T')[0];
+  document.getElementById('p-active').checked = p.is_active !== false;
+  calcPricePerUnit();
+  openModal('modal-price');
 }
 
 // ══ RECIPES ═══════════════════════════════════════════════════════════════════
