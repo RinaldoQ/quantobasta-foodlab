@@ -742,7 +742,10 @@ function thSort(page, col, label) {
   const s = sortState[page];
   const active = s.col === col;
   const arrow = active ? (s.dir === 1 ? ' ↑' : ' ↓') : '';
-  return `<th style="cursor:pointer;user-select:none;${active?'color:var(--purple);':''}" onclick="setSort('${page}','${col}')">${label}${arrow}</th>`;
+  const style = active
+    ? 'cursor:pointer;user-select:none;color:#FF8C00;font-weight:700;'
+    : 'cursor:pointer;user-select:none;color:var(--white);opacity:0.85;';
+  return `<th style="${style}" onclick="setSort('${page}','${col}')">${label}${arrow}</th>`;
 }
 
 function setSort(page, col) {
