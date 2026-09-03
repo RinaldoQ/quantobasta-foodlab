@@ -715,12 +715,53 @@ function dashboard() {
     </div>`;
 }
 
+// ══ SORT STATE ═══════════════════════════════════════════════════════════════
+const sortState = {
+  vendors: { col: 'name', dir: 1 },
+  ingredients: { col: 'name', dir: 1 },
+  prices: { col: 'ingredient', dir: 1 },
+};
+
+function sortData(arr, col, dir) {
+  return [...arr].sort((a, b) => {
+    let av = '', bv = '';
+    if (col === 'name')       { av = a.name||''; bv = b.name||''; }
+    if (col === 'location')   { av = a.location||''; bv = b.location||''; }
+    if (col === 'unit')       { av = a.unit||''; bv = b.unit||''; }
+    if (col === 'category')   { av = a.category||''; bv = b.category||''; }
+    if (col === 'ingredient') { av = a.ingredients?.name||''; bv = b.ingredients?.name||''; }
+    if (col === 'vendor')     { av = a.vendors?.name||''; bv = b.vendors?.name||''; }
+    if (col === 'brand')      { av = a.brand||''; bv = b.brand||''; }
+    if (col === 'price')      { av = parseFloat(a.price_per_unit)||0; bv = parseFloat(b.price_per_unit)||0; return dir * (av - bv); }
+    if (col === 'date')       { av = a.price_date||''; bv = b.price_date||''; }
+    return dir * av.localeCompare(bv);
+  });
+}
+
+function thSort(page, col, label) {
+  const s = sortState[page];
+  const active = s.col === col;
+  const arrow = active ? (s.dir === 1 ? ' ↑' : ' ↓') : '';
+  return `<th style="cursor:pointer;user-select:none;${active?'color:var(--purple);':''}" onclick="setSort('${page}','${col}')">${label}${arrow}</th>`;
+}
+
+function setSort(page, col) {
+  const s = sortState[page];
+  if (s.col === col) s.dir *= -1;
+  else { s.col = col; s.dir = 1; }
+  if (page === 'vendors') vendorsPage(document.querySelector('#main-content input[type=text]')?.value||'');
+  if (page === 'ingredients') ingredientsPage(document.querySelector('#main-content input[type=text]')?.value||'');
+  if (page === 'prices') pricesPage(document.querySelector('#main-content input[type=text]')?.value||'');
+}
+
 // ══ VENDORS ══════════════════════════════════════════════════════════════════
 function vendorsPage(filter='') {
   const m = document.getElementById('main-content');
-  const filtered = state.vendors.filter(v =>
-    v.name.toLowerCase().includes(filter.toLowerCase()) ||
-    (v.location||'').toLowerCase().includes(filter.toLowerCase())
+  const filtered = sortData(
+    state.vendors.filter(v =>
+      v.name.toLowerCase().includes(filter.toLowerCase()) ||
+      (v.location||'').toLowerCase().includes(filter.toLowerCase())
+    ), sortState.vendors.col, sortState.vendors.dir
   );
   m.innerHTML = `
     <div class="page-header">
@@ -734,7 +775,11 @@ function vendorsPage(filter='') {
           style="width:100%;padding:0.45rem 0.65rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.85rem;">
       </div>
       <table class="tbl">
-        <thead><tr><th>Name</th><th>Location</th><th>Notes</th><th>Actions</th></tr></thead>
+        <thead><tr>
+          ${thSort('vendors','name','Name')}
+          ${thSort('vendors','location','Location')}
+          <th>Notes</th><th>Actions</th>
+        </tr></thead>
         <tbody>
           ${filtered.length === 0
             ? `<tr><td colspan="4" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No vendors match your search' : 'No vendors yet — add your first supplier'}</td></tr>`
@@ -790,9 +835,11 @@ async function deleteVendor(id) {
 // ══ INGREDIENTS ═══════════════════════════════════════════════════════════════
 function ingredientsPage(filter='') {
   const m = document.getElementById('main-content');
-  const filtered = state.ingredients.filter(i =>
-    i.name.toLowerCase().includes(filter.toLowerCase()) ||
-    (i.category||'').toLowerCase().includes(filter.toLowerCase())
+  const filtered = sortData(
+    state.ingredients.filter(i =>
+      i.name.toLowerCase().includes(filter.toLowerCase()) ||
+      (i.category||'').toLowerCase().includes(filter.toLowerCase())
+    ), sortState.ingredients.col, sortState.ingredients.dir
   );
   m.innerHTML = `
     <div class="page-header">
@@ -806,7 +853,12 @@ function ingredientsPage(filter='') {
           style="width:100%;padding:0.45rem 0.65rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.85rem;">
       </div>
       <table class="tbl">
-        <thead><tr><th>Name</th><th>Unit</th><th>Category</th><th>No-Scale</th><th>Actions</th></tr></thead>
+        <thead><tr>
+          ${thSort('ingredients','name','Name')}
+          ${thSort('ingredients','unit','Unit')}
+          ${thSort('ingredients','category','Category')}
+          <th>No-Scale</th><th>Actions</th>
+        </tr></thead>
         <tbody>
           ${filtered.length === 0
             ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No ingredients match your search' : 'No ingredients yet'}</td></tr>`
@@ -868,12 +920,13 @@ async function deleteIngredient(id) {
   toast('Ingredient deleted');
 }
 
-// ══ PRICES ═══════════════════════════════════════════════════════════════════
 function pricesPage(filter='') {
   const m = document.getElementById('main-content');
-  const filtered = state.prices.filter(p =>
-    (p.ingredients?.name||'').toLowerCase().includes(filter.toLowerCase()) ||
-    (p.vendors?.name||'').toLowerCase().includes(filter.toLowerCase())
+  const filtered = sortData(
+    state.prices.filter(p =>
+      (p.ingredients?.name||'').toLowerCase().includes(filter.toLowerCase()) ||
+      (p.vendors?.name||'').toLowerCase().includes(filter.toLowerCase())
+    ), sortState.prices.col, sortState.prices.dir
   );
   m.innerHTML = `
     <div class="page-header">
@@ -887,7 +940,16 @@ function pricesPage(filter='') {
           style="width:100%;padding:0.45rem 0.65rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.85rem;">
       </div>
       <table class="tbl">
-        <thead><tr><th>Ingredient</th><th>Vendor</th><th>Brand / Producer</th><th>Package</th><th>Purchase Price</th><th>Price / Unit</th><th>Date</th><th>Active</th><th>Notes</th><th>Actions</th></tr></thead>
+        <thead><tr>
+          ${thSort('prices','ingredient','Ingredient')}
+          ${thSort('prices','vendor','Vendor')}
+          ${thSort('prices','brand','Brand / Producer')}
+          <th>Package</th>
+          <th>Purchase Price</th>
+          ${thSort('prices','price','Price / Unit')}
+          ${thSort('prices','date','Date')}
+          <th>Active</th><th>Notes</th><th>Actions</th>
+        </tr></thead>
         <tbody>
           ${filtered.length === 0
             ? `<tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No prices match your search' : 'No prices yet — add your first price entry'}</td></tr>`
