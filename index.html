@@ -444,6 +444,9 @@
       <div class="field field-span2"><label>Notes</label>
         <input id="p-notes" placeholder="e.g. on sale, seasonal, organic, wholesale">
       </div>
+      <div class="field field-span2"><label>Brand / Producer</label>
+        <input id="p-brand" placeholder="e.g. Kerrygold, Agostino Recca, DOP Taggiasca">
+      </div>
       <div class="field field-span2">
         <label><input type="checkbox" id="p-active" checked style="margin-right:6px"> Active price (used in calculations)</label>
       </div>
@@ -884,14 +887,15 @@ function pricesPage(filter='') {
           style="width:100%;padding:0.45rem 0.65rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.85rem;">
       </div>
       <table class="tbl">
-        <thead><tr><th>Ingredient</th><th>Vendor</th><th>Package</th><th>Purchase Price</th><th>Price / Unit</th><th>Date</th><th>Active</th><th>Notes</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Ingredient</th><th>Vendor</th><th>Brand / Producer</th><th>Package</th><th>Purchase Price</th><th>Price / Unit</th><th>Date</th><th>Active</th><th>Notes</th><th>Actions</th></tr></thead>
         <tbody>
           ${filtered.length === 0
-            ? `<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No prices match your search' : 'No prices yet — add your first price entry'}</td></tr>`
+            ? `<tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No prices match your search' : 'No prices yet — add your first price entry'}</td></tr>`
             : filtered.map(p => `
                 <tr>
                   <td><strong>${p.ingredients?.name || '—'}</strong> <span class="badge badge-gray">${p.ingredients?.unit || ''}</span></td>
                   <td>${p.vendors?.name || '—'}</td>
+                  <td><strong>${p.brand || '—'}</strong></td>
                   <td class="text-gray">${p.package_qty ? p.package_qty + ' ' + (p.package_unit || '') : '—'}</td>
                   <td class="qty-cell">${p.purchase_price ? '$' + parseFloat(p.purchase_price).toFixed(2) : '—'}</td>
                   <td class="qty-cell">${p.price_per_unit ? '$' + parseFloat(p.price_per_unit).toFixed(4) + '/' + (p.package_unit === 'lb' || p.package_unit === 'oz' ? 'g' : p.package_unit || 'unit') : '—'}</td>
@@ -942,6 +946,7 @@ function openPriceModal() {
   document.getElementById('p-price').value = '';
   document.getElementById('p-price-display').textContent = '— enter price and quantity above';
   document.getElementById('p-notes').value = '';
+  document.getElementById('p-brand').value = '';
   document.getElementById('p-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('p-active').checked = true;
   openModal('modal-price');
@@ -968,6 +973,7 @@ async function savePrice() {
       price_date: document.getElementById('p-date').value,
       is_active: document.getElementById('p-active').checked,
       notes: document.getElementById('p-notes').value || null,
+      brand: document.getElementById('p-brand').value || null,
     }).eq('id', state.editId);
     toast('Price updated', 'success');
   } else {
@@ -981,6 +987,7 @@ async function savePrice() {
       price_date: document.getElementById('p-date').value,
       is_active: document.getElementById('p-active').checked,
       notes: document.getElementById('p-notes').value || null,
+      brand: document.getElementById('p-brand').value || null,
     });
     toast('Price saved', 'success');
   }
@@ -1010,6 +1017,7 @@ function editPrice(id) {
   document.getElementById('p-package-qty').value = p.package_qty || '';
   document.getElementById('p-package-unit').value = p.package_unit || 'g';
   document.getElementById('p-notes').value = p.notes || '';
+  document.getElementById('p-brand').value = p.brand || '';
   document.getElementById('p-date').value = p.price_date || new Date().toISOString().split('T')[0];
   document.getElementById('p-active').checked = p.is_active !== false;
   calcPricePerUnit();
