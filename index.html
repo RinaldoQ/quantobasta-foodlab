@@ -732,6 +732,7 @@ function sortData(arr, col, dir) {
     if (col === 'ingredient') { av = a.ingredients?.name||''; bv = b.ingredients?.name||''; }
     if (col === 'vendor')     { av = a.vendors?.name||''; bv = b.vendors?.name||''; }
     if (col === 'brand')      { av = a.brand||''; bv = b.brand||''; }
+    if (col === 'purchase_price') { av = parseFloat(a.purchase_price)||0; bv = parseFloat(b.purchase_price)||0; return dir * (av - bv); }
     if (col === 'price')      { av = parseFloat(a.price_per_unit)||0; bv = parseFloat(b.price_per_unit)||0; return dir * (av - bv); }
     if (col === 'date')       { av = a.price_date||''; bv = b.price_date||''; }
     return dir * av.localeCompare(bv);
@@ -948,7 +949,7 @@ function pricesPage(filter='') {
           ${thSort('prices','vendor','Vendor')}
           ${thSort('prices','brand','Brand / Producer')}
           <th>Package</th>
-          <th>Purchase Price</th>
+          ${thSort('prices','purchase_price','Purchase Price')}
           ${thSort('prices','price','Price / Unit')}
           ${thSort('prices','date','Date')}
           <th>Active</th><th>Notes</th><th>Actions</th>
