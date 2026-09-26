@@ -251,6 +251,30 @@
   .qty-cell { font-weight: 600; color: var(--teal-dk); }
   .buy-cell { font-weight: 700; color: var(--purple); }
 
+  /* ── Board ────────────────────────────────────────────────────────────────── */
+  .note-item {
+    background: var(--white);
+    border: 1px solid var(--sand-dk);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+    cursor: default;
+    user-select: none;
+    transition: background 0.15s;
+  }
+  .note-item:hover { background: var(--sand); }
+  .note-reply { border-left: 3px solid var(--purple-mid); background: var(--purple-lt); }
+  .note-reply:hover { background: color-mix(in srgb, var(--purple-lt) 80%, var(--sand)); }
+  .note-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .note-author { font-weight: 700; font-size: 0.825rem; color: var(--purple-dk); }
+  .note-time { font-size: 0.72rem; color: var(--gray); margin-left: auto; }
+  .note-body { font-size: 0.875rem; color: var(--ink); line-height: 1.5; }
+  .note-tag { font-size: 0.7rem; font-weight: 600; padding: 1px 7px; border-radius: 99px; }
+  .tag-recipe { background: var(--teal-lt); color: var(--teal-dk); }
+  .tag-ingredient { background: var(--purple-lt); color: var(--purple-dk); }
+  .tag-shopping { background: #fef3c7; color: #92400e; }
+  .tag-urgent { background: #fee2e2; color: #b91c1c; }
+
   /* ── Utility ──────────────────────────────────────────────────────────────── */
   .flex { display: flex; }
   .gap-2 { gap: 0.5rem; }
@@ -313,6 +337,11 @@
     </button>
     <button class="nav-btn" onclick="show('shopping')">
       <span class="nav-icon">🛒</span> Shopping
+    </button>
+
+    <div class="nav-section">Team</div>
+    <button class="nav-btn" onclick="show('board')">
+      <span class="nav-icon">💬</span> Board
     </button>
   </nav>
 
@@ -643,7 +672,7 @@ function show(page) {
   document.querySelector(`.nav-btn[onclick="show('${page}')"]`)?.classList.add('active');
   const pages = { dashboard, vendors: vendorsPage, ingredients: ingredientsPage,
     prices: pricesPage, recipes: recipesPage, inventory: inventoryPage,
-    sessions: sessionsPage, shopping: shoppingPage };
+    sessions: sessionsPage, shopping: shoppingPage, board: boardPage };
   document.getElementById('main-content').innerHTML = '';
   pages[page]?.();
 }
@@ -1599,6 +1628,212 @@ function switchSession(id) {
   state.currentSessionId = id;
   const sess = state.sessions.find(s => s.id === id);
   renderShoppingList(sess);
+}
+
+// ══ BOARD ════════════════════════════════════════════════════════════════════
+let boardNotes = [];
+let contextMenu = { noteId: null, x: 0, y: 0 };
+
+function getCurrentAuthor() {
+  return localStorage.getItem('qb_author') || null;
+}
+
+function setAuthor(name) {
+  localStorage.setItem('qb_author', name);
+}
+
+async function loadBoardNotes() {
+  const { data } = await sb.from('notes').select('*').order('created_at', { ascending: true });
+  boardNotes = data || [];
+}
+
+function formatBoardTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+    ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
+function buildThread(notes, parentId, depth) {
+  const children = notes.filter(n => n.parent_id === parentId);
+  if (children.length === 0) return '';
+  return children.map(n => `
+    <div class="note-item ${depth > 0 ? 'note-reply' : ''}"
+      style="margin-left:${depth * 28}px;"
+      data-id="${n.id}"
+      oncontextmenu="showContextMenu(event,'${n.id}')"
+      onmousedown="startLongPress(event,'${n.id}')"
+      onmouseup="cancelLongPress()"
+      ontouchstart="startLongPress(event,'${n.id}')"
+      ontouchend="cancelLongPress()">
+      <div class="note-header">
+        <span class="note-author">${n.author}</span>
+        ${n.tag && n.tag !== 'general' ? `<span class="note-tag">${n.tag}</span>` : ''}
+        <span class="note-time">${formatBoardTime(n.created_at)}</span>
+      </div>
+      <div class="note-body">${n.message}</div>
+      ${buildThread(notes, n.id, depth + 1)}
+    </div>`).join('');
+}
+
+async function boardPage() {
+  const author = getCurrentAuthor();
+  if (!author) {
+    promptAuthorName();
+    return;
+  }
+  await loadBoardNotes();
+  const m = document.getElementById('main-content');
+  const topLevel = boardNotes.filter(n => !n.parent_id);
+
+  m.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">💬 Team Board</div>
+        <div class="page-subtitle">Posting as <strong>${author}</strong> &nbsp;
+          <span style="font-size:0.75rem;color:var(--purple);cursor:pointer;" onclick="changeAuthor()">change</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+      <div class="form-grid cols1">
+        <div class="field">
+          <div style="display:flex;gap:8px;align-items:flex-start;">
+            <textarea id="board-msg" placeholder="Write a note…"
+              style="flex:1;min-height:60px;padding:0.5rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.875rem;resize:vertical;font-family:var(--font-ui);"
+              onkeydown="if(event.key==='Enter'&&event.metaKey)postNote()"></textarea>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <select id="board-tag" style="padding:0.4rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.8rem;">
+                <option value="general">General</option>
+                <option value="recipe">Recipe</option>
+                <option value="ingredient">Ingredient</option>
+                <option value="shopping">Shopping</option>
+                <option value="urgent">🔴 Urgent</option>
+              </select>
+              <button class="btn btn-primary" onclick="postNote()" style="white-space:nowrap;">Post ↵</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="board-thread">
+      ${topLevel.length === 0
+        ? `<div class="empty"><div class="empty-icon">💬</div><div class="empty-msg">No notes yet — post the first one!</div></div>`
+        : topLevel.map(n => `
+          <div class="note-item"
+            data-id="${n.id}"
+            oncontextmenu="showContextMenu(event,'${n.id}')"
+            onmousedown="startLongPress(event,'${n.id}')"
+            onmouseup="cancelLongPress()"
+            ontouchstart="startLongPress(event,'${n.id}')"
+            ontouchend="cancelLongPress()">
+            <div class="note-header">
+              <span class="note-author">${n.author}</span>
+              ${n.tag && n.tag !== 'general' ? `<span class="note-tag tag-${n.tag}">${n.tag}</span>` : ''}
+              <span class="note-time">${formatBoardTime(n.created_at)}</span>
+            </div>
+            <div class="note-body">${n.message}</div>
+            ${buildThread(boardNotes, n.id, 1)}
+          </div>`).join('')
+      }
+    </div>
+
+    <!-- Context menu -->
+    <div id="ctx-menu" style="display:none;position:fixed;z-index:300;background:var(--white);border:1px solid var(--sand-dk);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:140px;">
+      <div onclick="replyToNote()" style="padding:10px 16px;cursor:pointer;font-size:0.875rem;border-bottom:1px solid var(--sand-dk);">↩ Reply</div>
+      <div onclick="deleteNote()" style="padding:10px 16px;cursor:pointer;font-size:0.875rem;color:#b91c1c;">🗑 Delete</div>
+    </div>`;
+
+  document.addEventListener('click', hideContextMenu);
+}
+
+function promptAuthorName() {
+  const m = document.getElementById('main-content');
+  m.innerHTML = `
+    <div style="max-width:400px;margin:4rem auto;">
+      <div class="card" style="text-align:center;">
+        <div style="font-size:2rem;margin-bottom:0.5rem;">💬</div>
+        <div class="card-title" style="justify-content:center;">Who are you?</div>
+        <div class="text-gray" style="margin-bottom:1rem;">This helps your notes show your name. Only asked once.</div>
+        <div class="field" style="margin-bottom:1rem;">
+          <input id="author-input" type="text" placeholder="Your name…"
+            style="text-align:center;font-size:1rem;"
+            onkeydown="if(event.key==='Enter')confirmAuthor()">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center;">
+          <button class="btn btn-primary" onclick="confirmAuthor()">Start posting</button>
+        </div>
+      </div>
+    </div>`;
+  setTimeout(() => document.getElementById('author-input')?.focus(), 100);
+}
+
+function confirmAuthor() {
+  const name = document.getElementById('author-input')?.value.trim();
+  if (!name) return;
+  setAuthor(name);
+  boardPage();
+}
+
+function changeAuthor() {
+  localStorage.removeItem('qb_author');
+  boardPage();
+}
+
+async function postNote(parentId = null) {
+  const msg = document.getElementById('board-msg')?.value.trim();
+  const tag = document.getElementById('board-tag')?.value || 'general';
+  const author = getCurrentAuthor();
+  if (!msg || !author) return;
+  await sb.from('notes').insert({ author, message: msg, tag, parent_id: parentId || null });
+  document.getElementById('board-msg').value = '';
+  await boardPage();
+}
+
+let longPressTimer = null;
+
+function startLongPress(e, noteId) {
+  longPressTimer = setTimeout(() => {
+    showContextMenu(e, noteId);
+  }, 500);
+}
+
+function cancelLongPress() {
+  if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+}
+
+function showContextMenu(e, noteId) {
+  e.preventDefault();
+  cancelLongPress();
+  contextMenu.noteId = noteId;
+  const menu = document.getElementById('ctx-menu');
+  if (!menu) return;
+  menu.style.display = 'block';
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 100) + 'px';
+}
+
+function hideContextMenu() {
+  const menu = document.getElementById('ctx-menu');
+  if (menu) menu.style.display = 'none';
+}
+
+async function replyToNote() {
+  hideContextMenu();
+  const parentId = contextMenu.noteId;
+  const author = getCurrentAuthor();
+  const msg = prompt('Reply:');
+  if (!msg?.trim()) return;
+  await sb.from('notes').insert({ author, message: msg.trim(), tag: 'general', parent_id: parentId });
+  await boardPage();
+}
+
+async function deleteNote() {
+  hideContextMenu();
+  if (!confirm('Delete this note and all its replies?')) return;
+  await sb.from('notes').delete().eq('id', contextMenu.noteId);
+  await boardPage();
 }
 
 // ══ MODAL HELPERS ════════════════════════════════════════════════════════════
