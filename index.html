@@ -1705,11 +1705,7 @@ async function boardPage() {
                 onkeydown="if(event.key==='Enter'&&event.metaKey)postNote()"></textarea>
               <button onclick="toggleEmojiPicker()" title="Add emoji"
                 style="position:absolute;bottom:8px;right:8px;background:none;border:none;cursor:pointer;font-size:1.1rem;opacity:0.6;line-height:1;">😊</button>
-              <div id="emoji-picker" style="display:none;position:absolute;bottom:44px;right:0;background:var(--white);border:1px solid var(--sand-dk);border-radius:10px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:50;width:220px;flex-wrap:wrap;gap:4px;">
-                ${['😊','😄','😂','❤️','👍','👏','🙏','🔥','⭐','✅','❌','⚠️','💡','📝','🍽️','🥩','🐟','🥗','🧄','🍋','🍷','🫒','🧀','🥚','🌿','🛒','📦','💰','🇮🇹','🎉'].map(e =>
-                  `<span onclick="insertEmoji('${e}')" style="cursor:pointer;font-size:1.2rem;padding:3px;border-radius:4px;display:inline-block;" onmouseover="this.style.background='var(--sand)'" onmouseout="this.style.background=''">${e}</span>`
-                ).join('')}
-              </div>
+              <div id="emoji-picker" style="display:none;position:absolute;bottom:44px;right:0;background:var(--white);border:1px solid var(--sand-dk);border-radius:10px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:50;width:220px;flex-wrap:wrap;gap:4px;"></div>
             </div>
             <div style="display:flex;flex-direction:column;gap:6px;">
               <select id="board-tag" style="padding:0.4rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.8rem;">
@@ -1790,10 +1786,34 @@ function changeAuthor() {
   boardPage();
 }
 
+const EMOJIS = ['😊','😄','😂','😅','🤣','❤️','👍','👎','👏','🙏','🔥','⭐','✅','❌','⚠️','💡','📝','🍽️','🥩','🐟','🥗','🧄','🍋','🍷','🫒','🧀','🥚','🌿','🛒','📦','💰','🇮🇹','🎉','💪','🤌'];
+
 function toggleEmojiPicker() {
   const picker = document.getElementById('emoji-picker');
   if (!picker) return;
-  picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
+  const isVisible = picker.style.display === 'flex';
+  if (isVisible) {
+    picker.style.display = 'none';
+    return;
+  }
+  if (!picker.dataset.populated) {
+    picker.innerHTML = EMOJIS.map(e =>
+      `<span onclick="insertEmoji('${e}');event.stopPropagation();" style="cursor:pointer;font-size:1.4rem;padding:4px;border-radius:6px;display:inline-block;line-height:1.2;"
+        onmouseover="this.style.background='#f0ede8'"
+        onmouseout="this.style.background=''">${e}</span>`
+    ).join('');
+    picker.dataset.populated = '1';
+  }
+  picker.style.display = 'flex';
+  // Close when clicking outside
+  setTimeout(() => {
+    document.addEventListener('click', function closePicker(e) {
+      if (!picker.contains(e.target) && e.target.title !== 'Add emoji') {
+        picker.style.display = 'none';
+        document.removeEventListener('click', closePicker);
+      }
+    });
+  }, 0);
 }
 
 function insertEmoji(emoji) {
