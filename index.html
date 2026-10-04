@@ -100,7 +100,7 @@
   .nav-icon { font-size: 1rem; width: 20px; text-align: center; }
 
   main {
-    flex: 1; padding: 1.5rem; overflow-y: auto;
+    flex: 1; padding: 1.5rem; overflow: visible;
     max-width: 1100px;
   }
 
@@ -150,6 +150,8 @@
     padding: 0.55rem 0.75rem; text-align: left;
     font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em;
   }
+  /* Column headers stay fixed just below the top bar while the page scrolls */
+  .tbl th { position: sticky; top: 56px; z-index: 5; }
   .tbl th:first-child { border-radius: 6px 0 0 0; }
   .tbl th:last-child  { border-radius: 0 6px 0 0; }
   .tbl td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--sand-dk); }
