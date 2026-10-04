@@ -440,7 +440,14 @@
         <select id="p-vendor"></select>
       </div>
       <div class="field"><label>Ingredient *</label>
-        <select id="p-ingredient"></select>
+        <select id="p-ingredient" onchange="refreshTipoOptions()"></select>
+      </div>
+      <div class="field"><label>Tipo</label>
+        <input id="p-tipo" list="p-tipo-list" placeholder="e.g. Dolce, Piccante — leave blank if none" autocomplete="off">
+        <datalist id="p-tipo-list"></datalist>
+        <div id="p-tipo-rename" style="display:none;font-size:0.72rem;margin-top:4px;">
+          <span style="color:var(--purple);cursor:pointer;text-decoration:underline;" onclick="renameTipo()">Fix spelling of this Tipo everywhere</span>
+        </div>
       </div>
       <div class="field"><label>Purchase Price (USD) *</label>
         <input id="p-purchase-price" type="number" step="0.01" min="0" placeholder="e.g. 12.99" oninput="calcPricePerUnit()">
@@ -761,6 +768,7 @@ function sortData(arr, col, dir) {
     if (col === 'ingredient') { av = a.ingredients?.name||''; bv = b.ingredients?.name||''; }
     if (col === 'vendor')     { av = a.vendors?.name||''; bv = b.vendors?.name||''; }
     if (col === 'brand')      { av = a.brand||''; bv = b.brand||''; }
+    if (col === 'tipo')       { av = a.tipo||''; bv = b.tipo||''; }
     if (col === 'purchase_price') { av = parseFloat(a.purchase_price)||0; bv = parseFloat(b.purchase_price)||0; return dir * (av - bv); }
     if (col === 'price')      { av = parseFloat(a.price_per_unit)||0; bv = parseFloat(b.price_per_unit)||0; return dir * (av - bv); }
     if (col === 'date')       { av = a.price_date||''; bv = b.price_date||''; }
@@ -859,6 +867,7 @@ async function saveVendor() {
 }
 
 async function deleteVendor(id) {
+  if (state.prices.some(p => p.vendor_id === id)) return toast('This vendor has price history and cannot be deleted', 'error');
   if (!confirm('Delete this vendor?')) return;
   await sb.from('vendors').delete().eq('id', id);
   await loadVendors(); vendorsPage();
@@ -947,6 +956,7 @@ async function saveIngredient() {
 }
 
 async function deleteIngredient(id) {
+  if (state.prices.some(p => p.ingredient_id === id)) return toast('This ingredient has price history and cannot be deleted', 'error');
   if (!confirm('Delete this ingredient?')) return;
   await sb.from('ingredients').delete().eq('id', id);
   await loadIngredients(); ingredientsPage();
@@ -958,6 +968,8 @@ function pricesPage(filter='') {
   const filtered = sortData(
     state.prices.filter(p =>
       (p.ingredients?.name||'').toLowerCase().includes(filter.toLowerCase()) ||
+      (p.tipo||'').toLowerCase().includes(filter.toLowerCase()) ||
+      (p.brand||'').toLowerCase().includes(filter.toLowerCase()) ||
       (p.vendors?.name||'').toLowerCase().includes(filter.toLowerCase())
     ), sortState.prices.col, sortState.prices.dir
   );
@@ -968,13 +980,14 @@ function pricesPage(filter='') {
     </div>
     <div class="card">
       <div style="margin-bottom:0.75rem">
-        <input type="text" placeholder="🔍 Search by ingredient or vendor…" value="${filter}"
+        <input type="text" placeholder="🔍 Search by ingredient, tipo, brand or vendor…" value="${filter}"
           oninput="pricesPage(this.value)"
           style="width:100%;padding:0.45rem 0.65rem;border:1.5px solid var(--sand-dk);border-radius:6px;font-size:0.85rem;">
       </div>
       <table class="tbl">
         <thead><tr>
           ${thSort('prices','ingredient','Ingredient')}
+          ${thSort('prices','tipo','Tipo')}
           ${thSort('prices','vendor','Vendor')}
           ${thSort('prices','brand','Brand / Producer')}
           <th>Package</th>
@@ -985,10 +998,11 @@ function pricesPage(filter='') {
         </tr></thead>
         <tbody>
           ${filtered.length === 0
-            ? `<tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No prices match your search' : 'No prices yet — add your first price entry'}</td></tr>`
+            ? `<tr><td colspan="11" style="text-align:center;padding:2rem;color:var(--gray)">${filter ? 'No prices match your search' : 'No prices yet — add your first price entry'}</td></tr>`
             : filtered.map(p => `
                 <tr>
                   <td><strong>${p.ingredients?.name || '—'}</strong> <span class="badge badge-gray">${p.ingredients?.unit || ''}</span></td>
+                  <td>${p.tipo || '<span class="text-gray">—</span>'}</td>
                   <td>${p.vendors?.name || '—'}</td>
                   <td><strong>${p.brand || '—'}</strong></td>
                   <td class="text-gray">${p.package_qty ? p.package_qty + ' ' + (p.package_unit || '') : '—'}</td>
@@ -999,7 +1013,6 @@ function pricesPage(filter='') {
                   <td class="text-gray">${p.notes || '—'}</td>
                   <td>
                     <button class="btn btn-secondary btn-sm" onclick="editPrice('${p.id}')">Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="deletePrice('${p.id}')">Delete</button>
                   </td>
                 </tr>`).join('')
           }
@@ -1042,6 +1055,8 @@ function openPriceModal() {
   document.getElementById('p-price-display').textContent = '— enter price and quantity above';
   document.getElementById('p-notes').value = '';
   document.getElementById('p-brand').value = '';
+  document.getElementById('p-tipo').value = '';
+  refreshTipoOptions();
   document.getElementById('p-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('p-active').checked = true;
   openModal('modal-price');
@@ -1069,6 +1084,7 @@ async function savePrice() {
       is_active: document.getElementById('p-active').checked,
       notes: document.getElementById('p-notes').value || null,
       brand: document.getElementById('p-brand').value || null,
+      tipo: normalizeTipo(ingredientId, document.getElementById('p-tipo').value),
     }).eq('id', state.editId);
     toast('Price updated', 'success');
   } else {
@@ -1083,6 +1099,7 @@ async function savePrice() {
       is_active: document.getElementById('p-active').checked,
       notes: document.getElementById('p-notes').value || null,
       brand: document.getElementById('p-brand').value || null,
+      tipo: normalizeTipo(ingredientId, document.getElementById('p-tipo').value),
     });
     toast('Price saved', 'success');
   }
@@ -1091,11 +1108,45 @@ async function savePrice() {
   await loadPrices(); pricesPage();
 }
 
-async function deletePrice(id) {
-  if (!confirm('Delete this price?')) return;
-  await sb.from('vendor_prices').delete().eq('id', id);
-  await loadPrices(); pricesPage();
-  toast('Price deleted');
+// Prices are never deleted — only deactivated (keeps cost history and Tipo list intact)
+
+// Tipi already used for an ingredient, taken from its full price history
+function tiposForIngredient(ingredientId) {
+  const set = new Map();
+  state.prices.filter(p => p.ingredient_id === ingredientId && p.tipo)
+    .forEach(p => { const k = p.tipo.trim().toLowerCase(); if (!set.has(k)) set.set(k, p.tipo.trim()); });
+  return [...set.values()].sort((a, b) => a.localeCompare(b));
+}
+
+function refreshTipoOptions() {
+  const ingId = document.getElementById('p-ingredient')?.value;
+  const list = document.getElementById('p-tipo-list');
+  if (!list) return;
+  list.innerHTML = ingId ? tiposForIngredient(ingId).map(t => `<option value="${t}">`).join('') : '';
+}
+
+// Match typed Tipo to an existing one (ignoring capitals and extra spaces) so the same Tipo is never stored two ways
+function normalizeTipo(ingredientId, typed) {
+  const clean = (typed || '').trim().replace(/\s+/g, ' ');
+  if (!clean) return null;
+  const match = tiposForIngredient(ingredientId).find(t => t.toLowerCase() === clean.toLowerCase());
+  return match || clean;
+}
+
+// Fix the spelling of a Tipo on every price entry (and recipe line) for this ingredient
+async function renameTipo() {
+  const ingId = document.getElementById('p-ingredient').value;
+  const oldName = state.editTipoOriginal;
+  if (!ingId || !oldName) return;
+  const newName = (prompt(`Correct spelling for "${oldName}" (changes every entry for this ingredient):`, oldName) || '').trim().replace(/\s+/g, ' ');
+  if (!newName || newName === oldName) return;
+  const { error } = await sb.from('vendor_prices').update({ tipo: newName }).eq('ingredient_id', ingId).eq('tipo', oldName);
+  if (error) return toast('Could not rename: ' + error.message, 'error');
+  await sb.from('recipe_ingredients').update({ tipo: newName }).eq('ingredient_id', ingId).eq('tipo', oldName);
+  document.getElementById('p-tipo').value = newName;
+  state.editTipoOriginal = newName;
+  await loadPrices(); refreshTipoOptions(); pricesPage();
+  toast(`Tipo renamed to "${newName}" everywhere`, 'success');
 }
 
 function editPrice(id) {
@@ -1113,6 +1164,10 @@ function editPrice(id) {
   document.getElementById('p-package-unit').value = p.package_unit || 'g';
   document.getElementById('p-notes').value = p.notes || '';
   document.getElementById('p-brand').value = p.brand || '';
+  document.getElementById('p-tipo').value = p.tipo || '';
+  refreshTipoOptions();
+  document.getElementById('p-tipo-rename').style.display = p.tipo ? 'block' : 'none';
+  state.editTipoOriginal = p.tipo || null;
   document.getElementById('p-date').value = p.price_date || new Date().toISOString().split('T')[0];
   document.getElementById('p-active').checked = p.is_active !== false;
   calcPricePerUnit();
