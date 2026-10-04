@@ -150,6 +150,17 @@
     padding: 0.55rem 0.75rem; text-align: left;
     font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em;
   }
+  /* Searchable pick lists (autocomplete) */
+  .combo { position: relative; }
+  .combo input { width: 100%; }
+  .combo-list { display: none; position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 60;
+    background: var(--white); border: 1.5px solid var(--sand-dk); border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12); max-height: 220px; overflow-y: auto; }
+  .combo-item { padding: 0.45rem 0.65rem; font-size: 0.85rem; cursor: pointer; }
+  .combo-item:hover, .combo-item.hl { background: var(--purple-lt); color: var(--purple); }
+  .combo-empty { padding: 0.45rem 0.65rem; font-size: 0.8rem; color: var(--gray-dk); font-style: italic; }
+  .similar-hint { font-size: 0.75rem; color: #b45309; background: #fef3c7; border-radius: 5px; padding: 0.35rem 0.55rem; margin-top: 4px; display: none; }
+
   /* Column headers stay fixed just below the top bar while the page scrolls */
   .tbl th { position: sticky; top: 56px; z-index: 5; }
   .tbl th:first-child { border-radius: 6px 0 0 0; }
@@ -364,7 +375,7 @@
       <button class="modal-close" onclick="closeModal('modal-vendor')">✕</button>
     </div>
     <div class="form-grid cols1">
-      <div class="field"><label>Vendor Name *</label><input id="v-name" placeholder="e.g. Eataly, Marconda, Whole Foods"></div>
+      <div class="field"><label>Vendor Name *</label><input id="v-name" placeholder="e.g. Eataly, Marconda, Whole Foods" autocomplete="off" oninput="showSimilar('v')"><div class="similar-hint" id="v-similar"></div></div>
       <div class="field"><label>Location / URL</label><input id="v-location" placeholder="e.g. Los Angeles, CA"></div>
       <div class="field"><label>Notes</label><textarea id="v-notes" placeholder="Specialty, hours, contact…"></textarea></div>
     </div>
@@ -383,7 +394,7 @@
       <button class="modal-close" onclick="closeModal('modal-ingredient')">✕</button>
     </div>
     <div class="form-grid">
-      <div class="field field-span2"><label>Ingredient Name *</label><input id="i-name" placeholder="e.g. Yellow Onion, Trota, White Wine Vinegar"></div>
+      <div class="field field-span2"><label>Ingredient Name *</label><input id="i-name" placeholder="e.g. Yellow Onion, Trota, White Wine Vinegar" autocomplete="off" oninput="showSimilar('i')"><div class="similar-hint" id="i-similar"></div></div>
       <div class="field"><label>Unit *</label>
         <select id="i-unit">
           <option value="g">g (grams)</option>
@@ -483,7 +494,7 @@
         <input id="p-notes" placeholder="e.g. on sale, seasonal, organic, wholesale">
       </div>
       <div class="field field-span2"><label>Brand / Producer</label>
-        <input id="p-brand" placeholder="e.g. Kerrygold, Agostino Recca, DOP Taggiasca">
+        <input id="p-brand" list="p-brand-list" autocomplete="off" placeholder="e.g. Kerrygold, Agostino Recca, DOP Taggiasca"><datalist id="p-brand-list"></datalist>
       </div>
       <div class="field field-span2">
         <label><input type="checkbox" id="p-active" checked style="margin-right:6px"> Active price (used in calculations)</label>
@@ -849,6 +860,7 @@ function openVendorModal(id) {
   document.getElementById('v-name').value = v?.name || '';
   document.getElementById('v-location').value = v?.location || '';
   document.getElementById('v-notes').value = v?.notes || '';
+  document.getElementById('v-similar').style.display = 'none';
   openModal('modal-vendor');
 }
 function editVendor(id) { openVendorModal(id); }
@@ -856,6 +868,7 @@ function editVendor(id) { openVendorModal(id); }
 async function saveVendor() {
   const name = document.getElementById('v-name').value.trim();
   if (!name) return toast('Vendor name is required', 'error');
+  if (!confirmNotDuplicate('v', name)) return;
   const data = { name, location: document.getElementById('v-location').value, notes: document.getElementById('v-notes').value };
   if (state.editId) {
     await sb.from('vendors').update(data).eq('id', state.editId);
@@ -932,6 +945,7 @@ function openIngModal(id) {
   document.getElementById('i-category').value = i?.category || '';
   document.getElementById('i-noscale').checked = i?.no_autoscale || false;
   document.getElementById('i-notes').value = i?.notes || '';
+  document.getElementById('i-similar').style.display = 'none';
   openModal('modal-ingredient');
 }
 function editIngredient(id) { openIngModal(id); }
@@ -939,6 +953,7 @@ function editIngredient(id) { openIngModal(id); }
 async function saveIngredient() {
   const name = document.getElementById('i-name').value.trim();
   if (!name) return toast('Ingredient name is required', 'error');
+  if (!confirmNotDuplicate('i', name)) return;
   const data = {
     name,
     unit: document.getElementById('i-unit').value,
@@ -1059,6 +1074,8 @@ function openPriceModal() {
   document.getElementById('p-brand').value = '';
   document.getElementById('p-tipo').value = '';
   refreshTipoOptions();
+  makeCombo('p-vendor', 'Type to search vendors…'); makeCombo('p-ingredient', 'Type to search ingredients…');
+  syncCombo('p-vendor'); syncCombo('p-ingredient');
   document.getElementById('p-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('p-active').checked = true;
   openModal('modal-price');
@@ -1085,7 +1102,7 @@ async function savePrice() {
       price_date: document.getElementById('p-date').value,
       is_active: document.getElementById('p-active').checked,
       notes: document.getElementById('p-notes').value || null,
-      brand: document.getElementById('p-brand').value || null,
+      brand: normalizeBrand(document.getElementById('p-brand').value),
       tipo: normalizeTipo(ingredientId, document.getElementById('p-tipo').value),
     }).eq('id', state.editId);
     toast('Price updated', 'success');
@@ -1100,7 +1117,7 @@ async function savePrice() {
       price_date: document.getElementById('p-date').value,
       is_active: document.getElementById('p-active').checked,
       notes: document.getElementById('p-notes').value || null,
-      brand: document.getElementById('p-brand').value || null,
+      brand: normalizeBrand(document.getElementById('p-brand').value),
       tipo: normalizeTipo(ingredientId, document.getElementById('p-tipo').value),
     });
     toast('Price saved', 'success');
@@ -1125,6 +1142,126 @@ function refreshTipoOptions() {
   const list = document.getElementById('p-tipo-list');
   if (!list) return;
   list.innerHTML = ingId ? tiposForIngredient(ingId).map(t => `<option value="${t}">`).join('') : '';
+  refreshBrandOptions();
+}
+
+// Brands: those used for this ingredient first, then every other brand on file
+function allBrands() {
+  const m = new Map();
+  state.prices.filter(p => p.brand).forEach(p => { const k = p.brand.trim().toLowerCase(); if (!m.has(k)) m.set(k, p.brand.trim()); });
+  return m;
+}
+function refreshBrandOptions() {
+  const list = document.getElementById('p-brand-list');
+  if (!list) return;
+  const ingId = document.getElementById('p-ingredient')?.value;
+  const forIng = [...new Set(state.prices.filter(p => p.ingredient_id === ingId && p.brand).map(p => p.brand.trim()))].sort();
+  const others = [...allBrands().values()].filter(b => !forIng.some(f => f.toLowerCase() === b.toLowerCase())).sort();
+  list.innerHTML = [...forIng, ...others].map(b => `<option value="${b}">`).join('');
+}
+function normalizeBrand(typed) {
+  const clean = (typed || '').trim().replace(/\s+/g, ' ');
+  if (!clean) return null;
+  return allBrands().get(clean.toLowerCase()) || clean;
+}
+
+// ── Searchable pick lists ───────────────────────────────────────────────────
+// Turns a <select> into a type-to-search box; the original select stays (hidden) and keeps its value
+function normText(t) { return (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+
+function makeCombo(selectId, placeholder) {
+  const sel = document.getElementById(selectId);
+  if (!sel || sel.dataset.combo) return;
+  sel.dataset.combo = '1';
+  sel.style.display = 'none';
+  const wrap = document.createElement('div');
+  wrap.className = 'combo';
+  wrap.innerHTML = `<input id="${selectId}-search" autocomplete="off" placeholder="${placeholder}"><div class="combo-list" id="${selectId}-list"></div>`;
+  sel.parentNode.insertBefore(wrap, sel);
+  const input = wrap.querySelector('input');
+  const list = wrap.querySelector('.combo-list');
+  let hl = -1;
+  const render = () => {
+    const q = normText(input.value);
+    const opts = [...sel.options].filter(o => o.value && (!q || normText(o.text).includes(q)));
+    hl = opts.length ? 0 : -1;
+    list.innerHTML = opts.length
+      ? opts.map((o, i) => `<div class="combo-item${i === 0 ? ' hl' : ''}" data-v="${o.value}">${o.text}</div>`).join('')
+      : `<div class="combo-empty">No match — add it first under ${selectId === 'p-vendor' ? 'Vendors' : 'Ingredients'}</div>`;
+    list.style.display = 'block';
+  };
+  const pick = (v) => {
+    sel.value = v;
+    syncCombo(selectId);
+    list.style.display = 'none';
+    sel.dispatchEvent(new Event('change'));
+  };
+  input.addEventListener('focus', () => { input.select(); render(); });
+  input.addEventListener('input', () => { if (!input.value) sel.value = ''; render(); });
+  input.addEventListener('keydown', (e) => {
+    const items = [...list.querySelectorAll('.combo-item')];
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); if (!items.length) return;
+      hl = (hl + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      items.forEach((it, i) => it.classList.toggle('hl', i === hl));
+      items[hl].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      e.preventDefault(); if (items[hl]) pick(items[hl].dataset.v);
+    } else if (e.key === 'Escape') { list.style.display = 'none'; syncCombo(selectId); }
+  });
+  list.addEventListener('mousedown', (e) => { const it = e.target.closest('.combo-item'); if (it) { e.preventDefault(); pick(it.dataset.v); } });
+  input.addEventListener('blur', () => setTimeout(() => { list.style.display = 'none'; syncCombo(selectId); }, 120));
+}
+
+// Show the selected item's name in the search box
+function syncCombo(selectId) {
+  const sel = document.getElementById(selectId);
+  const input = document.getElementById(selectId + '-search');
+  if (!sel || !input) return;
+  const o = sel.options[sel.selectedIndex];
+  input.value = o && o.value ? o.text : '';
+}
+
+// ── Duplicate protection for new vendors / ingredients ──────────────────────
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+function findSimilar(kind, name) {
+  const list = kind === 'v' ? state.vendors : state.ingredients;
+  const q = normText(name);
+  if (q.length < 3) return { exact: null, similar: [] };
+  const others = list.filter(x => x.id !== state.editId);
+  const exact = others.find(x => normText(x.name) === q) || null;
+  const similar = others.filter(x => {
+    const n = normText(x.name);
+    if (n === q) return false;
+    return n.includes(q) || q.includes(n) || (Math.abs(n.length - q.length) <= 2 && editDistance(n, q) <= 2);
+  }).slice(0, 5);
+  return { exact, similar };
+}
+function showSimilar(kind) {
+  const name = document.getElementById(kind + '-name').value;
+  const box = document.getElementById(kind + '-similar');
+  const { exact, similar } = findSimilar(kind, name);
+  const label = kind === 'v' ? 'vendor' : 'ingredient';
+  if (exact) {
+    box.innerHTML = `⛔ "${exact.name}" already exists — use it instead of adding a new ${label}.`;
+    box.style.display = 'block';
+  } else if (similar.length) {
+    box.innerHTML = `⚠️ Similar ${label}s already on file: <strong>${similar.map(x => x.name).join('</strong>, <strong>')}</strong>. Is it one of these?`;
+    box.style.display = 'block';
+  } else box.style.display = 'none';
+}
+function confirmNotDuplicate(kind, name) {
+  const { exact, similar } = findSimilar(kind, name);
+  const label = kind === 'v' ? 'vendor' : 'ingredient';
+  if (exact) { toast(`"${exact.name}" already exists — no duplicate ${label} saved`, 'error'); return false; }
+  if (similar.length) return confirm(`Similar ${label}s already exist:\n\n${similar.map(x => '• ' + x.name).join('\n')}\n\nSave "${name}" as a separate ${label} anyway?`);
+  return true;
 }
 
 // Match typed Tipo to an existing one (ignoring capitals and extra spaces) so the same Tipo is never stored two ways
@@ -1168,6 +1305,8 @@ function editPrice(id) {
   document.getElementById('p-brand').value = p.brand || '';
   document.getElementById('p-tipo').value = p.tipo || '';
   refreshTipoOptions();
+  makeCombo('p-vendor', 'Type to search vendors…'); makeCombo('p-ingredient', 'Type to search ingredients…');
+  syncCombo('p-vendor'); syncCombo('p-ingredient');
   document.getElementById('p-tipo-rename').style.display = p.tipo ? 'block' : 'none';
   state.editTipoOriginal = p.tipo || null;
   document.getElementById('p-date').value = p.price_date || new Date().toISOString().split('T')[0];
