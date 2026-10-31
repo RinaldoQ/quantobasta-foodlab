@@ -673,7 +673,7 @@ async function loadPrices() {
 async function loadRecipes() {
   const { data } = await sb.from('recipes').select('*').order('name');
   state.recipes = data || [];
-  const { data: vd } = await sb.from('recipe_versions').select('*, recipe_ingredients(*, ingredients(name,unit))').order('version_number', {ascending: false});
+  const { data: vd } = await sb.from('recipe_versions').select('*, recipe_ingredients(*, ingredients(name,unit,no_autoscale))').order('version_number', {ascending: false});
   state.versions = vd || [];
 }
 async function loadSessions() {
@@ -687,6 +687,7 @@ async function loadInventory() {
 
 // ══ NAVIGATION ══════════════════════════════════════════════════════════════
 function show(page) {
+  if (page === 'recipes' && state.currentPage !== 'recipes' && state.rv) state.rv.mode = 'list';
   state.currentPage = page;
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.querySelector(`.nav-btn[onclick="show('${page}')"]`)?.classList.add('active');
@@ -969,7 +970,8 @@ async function saveIngredient() {
     toast('Ingredient added', 'success');
   }
   closeModal('modal-ingredient');
-  await loadIngredients(); ingredientsPage();
+  await loadIngredients();
+  if (state.afterIngSave) { const f = state.afterIngSave; state.afterIngSave = null; f(); } else ingredientsPage();
 }
 
 async function deleteIngredient(id) {
@@ -1315,58 +1317,423 @@ function editPrice(id) {
   openModal('modal-price');
 }
 
-// ══ RECIPES ═══════════════════════════════════════════════════════════════════
+// ══ RECIPES — Entry → Testing → Production ═══════════════════════════════════
+state.rv = { mode: 'list', id: null, extra: [], ask: false, showPrev: false, draft: null, scaleBy: 'servings', scaleVal: '' };
+const RV_WINDOW = 4;
+const rvVers = rid => state.versions.filter(v => v.recipe_id === rid);
+const rvBase = rid => rvVers(rid).find(v => v.status === 'base') || null;
+const rvWin  = rid => rvVers(rid).filter(v => v.status === 'active').sort((a, b) => b.version_number - a.version_number).slice(0, RV_WINDOW);
+const rvHero = rid => rvVers(rid).find(v => v.status === 'hero') || null;
+const rvPend = rid => rvVers(rid).find(v => v.status === 'pending') || null;
+const rvArch = rid => rvVers(rid).filter(v => v.status === 'archived' || v.status === 'rejected').sort((a, b) => b.version_number - a.version_number);
+const rvIng  = id => state.ingredients.find(i => i.id === id);
+const rvKey  = ri => ri.ingredient_id + '|' + (ri.tipo || '');
+const rvFmt  = n => (n === null || n === undefined || n === '' || isNaN(n)) ? '—' : String(Math.round(n * 10) / 10);
+const rvToday = () => new Date().toISOString().split('T')[0];
+function rvQty(ver, key) { if (!ver) return null; const ri = (ver.recipe_ingredients || []).find(x => rvKey(x) === key); return ri ? +ri.quantity : null; }
+function rvRows(vers) {
+  const m = new Map();
+  vers.filter(Boolean).forEach(v => (v.recipe_ingredients || []).slice().sort((a, b) => (a.position ?? 999) - (b.position ?? 999)).forEach(ri => {
+    const k = rvKey(ri);
+    if (!m.has(k)) m.set(k, { key: k, ingredient_id: ri.ingredient_id, tipo: ri.tipo || '', pos: ri.position ?? 999, order: m.size });
+  }));
+  return [...m.values()].sort((a, b) => a.pos - b.pos || a.order - b.order);
+}
+function rvLabel(row) {
+  const i = rvIng(row.ingredient_id);
+  return `${i ? i.name : '?'}${row.tipo ? ' <span class="text-gray">· ' + row.tipo + '</span>' : ''} <span class="badge badge-gray">${i ? i.unit : ''}</span>`;
+}
+function rvIngOptions(sel) {
+  return '<option value=""></option>' + state.ingredients.map(i => `<option value="${i.id}"${i.id === sel ? ' selected' : ''}>${i.name} (${i.unit})</option>`).join('');
+}
+function rvCost(v) { const c = v ? calcVersionCost(v) : null; return c ? '$' + c.total.toFixed(2) : '—'; }
+function rvGo(mode, id) { state.rv.mode = mode; state.rv.id = id || null; state.rv.extra = []; state.rv.ask = false; state.rv.showPrev = false; state.rv.scaleVal = ''; recipesPage(); window.scrollTo(0, 0); }
+
 function recipesPage() {
+  const rv = state.rv;
+  if (rv.mode === 'entry') return rvEntryPage();
+  if (rv.mode === 'recipe' && rv.id) {
+    const r = state.recipes.find(x => x.id === rv.id);
+    if (r) return (r.phase === 'production' && rvHero(r.id)) ? rvProdPage(r) : rvTestPage(r);
+  }
+  rv.mode = 'list';
   const m = document.getElementById('main-content');
   m.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Recipes</div><div class="page-subtitle">R&D recipe library — up to 4 versions per dish</div></div>
-      <button class="btn btn-primary" onclick="openRecipeModal()">+ Add Recipe</button>
+      <div><div class="page-title">Recipes</div><div class="page-subtitle">Entry → Testing → Production</div></div>
+      <button class="btn btn-primary" onclick="state.rv.draft=null;rvGo('entry')">+ New Recipe</button>
     </div>
-    ${state.recipes.length === 0
-      ? `<div class="card"><div class="empty"><div class="empty-icon">📖</div><div class="empty-msg">No recipes yet</div><div class="empty-sub">Add your first recipe to get started</div></div></div>`
-      : state.recipes.map(r => {
-          const vers = state.versions.filter(v => v.recipe_id === r.id).sort((a,b) => b.version_number - a.version_number).slice(0,4);
-          const cur = vers.find(v => v.is_current);
-          const cost = cur ? calcVersionCost(cur) : null;
-          return `
-          <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.75rem">
-              <div>
-                <div style="font-size:1.05rem;font-weight:700;color:var(--purple-dk)">${r.name}</div>
-                <div class="text-gray">${r.category || '—'} ${r.description ? '· ' + r.description : ''}</div>
-              </div>
-              <div class="flex gap-2">
-                <button class="btn btn-secondary btn-sm" onclick="editRecipe('${r.id}')">Edit</button>
-                <button class="btn btn-teal btn-sm" onclick="openVersionModal('${r.id}')">+ Version</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteRecipe('${r.id}')">Delete</button>
-              </div>
-            </div>
-            ${vers.length === 0
-              ? `<div class="text-gray" style="padding:0.5rem 0">No versions yet — add the first cook date and ingredients</div>`
-              : `<table class="tbl">
-                  <thead><tr><th>Version</th><th>Cooked</th><th>Serves</th><th>Main Ingredient</th><th>Ingredients</th><th>Est. Cost</th><th>Chef Notes</th><th></th></tr></thead>
-                  <tbody>
-                    ${vers.map(v => {
-                      const vCost = calcVersionCost(v);
-                      const mainIng = state.ingredients.find(i => i.id === v.main_ingredient_id);
-                      return `<tr style="${v.is_current ? 'background:var(--teal-lt)' : ''}">
-                        <td>${v.is_current ? '<span class="badge badge-current">v'+v.version_number+' current</span>' : '<span class="badge badge-gray">v'+v.version_number+'</span>'}</td>
-                        <td>${v.cooked_on || '—'}</td>
-                        <td>${v.serves || '—'}</td>
-                        <td>${mainIng ? mainIng.name + ' ' + (v.main_ingredient_qty || '') + ' ' + mainIng.unit : '—'}</td>
-                        <td>${(v.recipe_ingredients || []).length} items</td>
-                        <td class="qty-cell">${vCost !== null ? '$' + vCost.total.toFixed(2) + (v.serves ? ' · $' + (vCost.total/v.serves).toFixed(2) + '/srv' : '') : '<span class="text-gray">no prices</span>'}</td>
-                        <td class="text-gray" style="max-width:180px;font-size:0.78rem">${v.chef_notes || '—'}</td>
-                        <td>${!v.is_current ? `<button class="btn btn-secondary btn-sm" onclick="setCurrentVersion('${v.id}','${r.id}')">Set current</button>` : ''}</td>
-                      </tr>`;
-                    }).join('')}
-                  </tbody>
-                </table>`
-            }
-          </div>`;
-        }).join('')
-    }`;
+    <div class="card"><table class="tbl">
+      <thead><tr><th>Recipe</th><th>Category</th><th>Phase</th><th>Hero</th><th>Versions</th><th>Hero cost</th><th></th></tr></thead>
+      <tbody>${state.recipes.length === 0
+        ? `<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--gray)">No recipes yet — click "+ New Recipe"</td></tr>`
+        : state.recipes.map(r => {
+            const h = rvHero(r.id);
+            const prod = r.phase === 'production' && h;
+            return `<tr>
+              <td><strong>${r.name}</strong></td>
+              <td>${r.category || '—'}</td>
+              <td>${prod ? '<span class="badge badge-teal">Production</span>' : '<span class="badge badge-purple">Testing</span>'}</td>
+              <td>${h ? 'V' + h.version_number + ' · ' + (h.cooked_on || '') : '—'}</td>
+              <td>${rvVers(r.id).length}</td>
+              <td>${rvCost(h)}</td>
+              <td><button class="btn btn-secondary btn-sm" onclick="rvGo('recipe','${r.id}')">Open</button></td>
+            </tr>`; }).join('')}
+      </tbody></table></div>`;
+}
+
+// ── 1 · Entry ──────────────────────────────────────────────────────────────────
+function rvEntryPage() {
+  const d = state.rv.draft || (state.rv.draft = { name: '', category: '', description: '', servings: '', main: '', instructions: '',
+    lines: Array.from({ length: 5 }, () => ({ ing: '', tipo: '', qty: '', notes: '' })) });
+  const cats = ['antipasto','primo','secondo','contorno','dolce','togo','beverage','other'];
+  const m = document.getElementById('main-content');
+  m.innerHTML = `
+    <div class="page-header">
+      <div><div class="page-title">New Recipe</div><div class="page-subtitle">Step 1 of 3 — base ingredients, quantities and instructions</div></div>
+      <button class="btn btn-secondary" onclick="rvGo('list')">Cancel</button>
+    </div>
+    <div class="card">
+      <div class="form-grid">
+        <div class="field field-span2"><label>Recipe Name *</label><input id="rv-name" value="${d.name}" placeholder="Trota in carpione"></div>
+        <div class="field"><label>Category</label><select id="rv-cat"><option value="">—</option>${cats.map(c => `<option${c === d.category ? ' selected' : ''}>${c}</option>`).join('')}</select></div>
+        <div class="field"><label>Servings</label><input id="rv-serv" type="number" min="0" value="${d.servings}" placeholder="6"></div>
+        <div class="field"><label>Main ingredient (for scaling)</label><select id="rv-main">${rvIngOptions(d.main)}</select></div>
+        <div class="field"><label>Description</label><input id="rv-desc" value="${d.description}" placeholder="Short description"></div>
+      </div>
+    </div>
+    <div class="card">
+      <table class="tbl"><thead><tr><th style="width:34%">Ingredient</th><th>Tipo</th><th style="width:12%">Qty</th><th style="width:8%">Unit</th><th>Notes</th><th style="width:4%"></th></tr></thead>
+      <tbody>${d.lines.map((l, i) => `<tr>
+        <td><select id="rv-ing-${i}" onchange="rvLineIng(${i})">${rvIngOptions(l.ing)}</select></td>
+        <td><input id="rv-tipo-${i}" list="rv-tl-${i}" value="${l.tipo}" placeholder="—" autocomplete="off"><datalist id="rv-tl-${i}"></datalist></td>
+        <td><input id="rv-qty-${i}" type="number" step="any" min="0" value="${l.qty}"></td>
+        <td id="rv-unit-${i}">${rvIng(l.ing)?.unit || ''}</td>
+        <td><input id="rv-note-${i}" value="${l.notes}"></td>
+        <td><button class="btn btn-secondary btn-sm" onclick="rvLineRemove(${i})" title="Remove line">✕</button></td>
+      </tr>`).join('')}</tbody></table>
+      <div class="flex gap-2" style="margin-top:0.75rem">
+        <button class="btn btn-secondary btn-sm" onclick="rvLineAdd()">+ Add line</button>
+        <button class="btn btn-secondary btn-sm" onclick="rvNewIngredient()">+ New ingredient</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="field"><label>Instructions</label><textarea id="rv-instr" style="min-height:140px" placeholder="Preparation steps…">${d.instructions}</textarea></div>
+      <div class="modal-footer"><button class="btn btn-primary" onclick="rvSaveBase()">Save base and open Testing</button></div>
+    </div>`;
+  makeCombo('rv-main', 'Type to search ingredients…');
+  d.lines.forEach((_, i) => { makeCombo('rv-ing-' + i, 'Type to search ingredients…'); syncCombo('rv-ing-' + i); rvLineIng(i); });
+  syncCombo('rv-main');
+}
+function rvReadDraft() {
+  const d = state.rv.draft, g = id => document.getElementById(id);
+  d.name = g('rv-name').value; d.category = g('rv-cat').value; d.servings = g('rv-serv').value;
+  d.main = g('rv-main').value; d.description = g('rv-desc').value; d.instructions = g('rv-instr').value;
+  d.lines = d.lines.map((_, i) => ({ ing: g('rv-ing-' + i).value, tipo: g('rv-tipo-' + i).value, qty: g('rv-qty-' + i).value, notes: g('rv-note-' + i).value }));
+}
+function rvLineIng(i) {
+  const id = document.getElementById('rv-ing-' + i)?.value;
+  const u = document.getElementById('rv-unit-' + i); if (u) u.textContent = rvIng(id)?.unit || '';
+  const l = document.getElementById('rv-tl-' + i); if (l) l.innerHTML = id ? tiposForIngredient(id).map(t => `<option value="${t}">`).join('') : '';
+}
+function rvLineAdd() { rvReadDraft(); state.rv.draft.lines.push({ ing: '', tipo: '', qty: '', notes: '' }); rvEntryPage(); }
+function rvLineRemove(i) { rvReadDraft(); state.rv.draft.lines.splice(i, 1); rvEntryPage(); }
+function rvNewIngredient() {
+  if (state.rv.mode === 'entry') { rvReadDraft(); state.afterIngSave = () => recipesPage(); }
+  else { rvReadExtras(); state.afterIngSave = () => rvKeepMods(() => recipesPage()); }
+  openIngModal();
+}
+async function rvSaveBase() {
+  rvReadDraft();
+  const d = state.rv.draft;
+  if (!d.name.trim()) return toast('Recipe name is required', 'error');
+  const lines = d.lines.filter(l => l.ing && l.qty !== '' && !isNaN(+l.qty));
+  if (!lines.length) return toast('Add at least one ingredient with a quantity', 'error');
+  const mainQty = lines.filter(l => l.ing === d.main).reduce((s, l) => s + +l.qty, 0) || null;
+  const { data: r, error } = await sb.from('recipes').insert({ name: d.name.trim(), category: d.category || null, description: d.description || null,
+    instructions: d.instructions || null, servings: parseInt(d.servings) || null, main_ingredient_id: d.main || null, phase: 'testing' }).select().single();
+  if (error || !r) return toast('Could not save recipe: ' + (error?.message || ''), 'error');
+  const { data: v, error: e2 } = await sb.from('recipe_versions').insert({ recipe_id: r.id, version_number: 0, status: 'base', is_current: false,
+    serves: parseInt(d.servings) || null, main_ingredient_id: d.main || null, main_ingredient_qty: mainQty, cooked_on: rvToday(), instructions: d.instructions || null }).select().single();
+  if (e2 || !v) return toast('Could not save base: ' + (e2?.message || ''), 'error');
+  const { error: e3 } = await sb.from('recipe_ingredients').insert(lines.map((l, i) => ({ version_id: v.id, ingredient_id: l.ing,
+    tipo: normalizeTipo(l.ing, l.tipo), quantity: +l.qty, notes: l.notes || null, position: i })));
+  if (e3) return toast('Could not save ingredients: ' + e3.message, 'error');
+  state.rv.draft = null;
+  await loadRecipes();
+  toast('Base saved', 'success');
+  rvGo('recipe', r.id);
+}
+
+// ── Shared pieces for Testing and Production ─────────────────────────────────
+function rvModCells(rows, src, r) {
+  return rows.map(row => {
+    const q = rvQty(src, row.key), ing = rvIng(row.ingredient_id);
+    return `<td><input class="rv-mod" type="number" step="any" min="0" style="width:100%" data-key="${row.key}" data-ing="${row.ingredient_id}" data-tipo="${row.tipo}"
+      data-orig="${q ?? ''}" ${row.ingredient_id === r.main_ingredient_id ? 'data-main="1"' : ''} ${ing?.no_autoscale ? 'data-noscale="1"' : ''}
+      value="${q ?? ''}" oninput="rvModInput(this)"></td>`;
+  });
+}
+function rvExtraRows(colsBefore) {
+  return state.rv.extra.map((x, i) => `<tr>
+    <td colspan="${colsBefore}"><div style="display:grid;grid-template-columns:2fr 1fr;gap:0.4rem"><select id="rv-x-ing-${i}" onchange="rvExtraIng(${i})">${rvIngOptions(x.ing)}</select>
+      <input id="rv-x-tipo-${i}" list="rv-x-tl-${i}" placeholder="Tipo" autocomplete="off" value="${x.tipo || ''}"><datalist id="rv-x-tl-${i}"></datalist></div></td>
+    <td><input id="rv-x-qty-${i}" type="number" step="any" min="0" style="width:100%" value="${x.qty || ''}" placeholder="qty"></td></tr>`).join('');
+}
+function rvInitExtras() { state.rv.extra.forEach((_, i) => { makeCombo('rv-x-ing-' + i, 'New ingredient line…'); syncCombo('rv-x-ing-' + i); rvExtraIng(i); }); }
+function rvExtraIng(i) {
+  const id = document.getElementById('rv-x-ing-' + i)?.value;
+  const l = document.getElementById('rv-x-tl-' + i); if (l) l.innerHTML = id ? tiposForIngredient(id).map(t => `<option value="${t}">`).join('') : '';
+}
+function rvReadExtras() {
+  state.rv.extra = state.rv.extra.map((_, i) => ({ ing: document.getElementById('rv-x-ing-' + i)?.value || '',
+    tipo: document.getElementById('rv-x-tipo-' + i)?.value || '', qty: document.getElementById('rv-x-qty-' + i)?.value || '' }));
+}
+// Typing a new main-ingredient quantity rescales every other line from the latest proportions (manual edits and "no autoscale" lines stay as typed)
+function rvModInput(el) {
+  if (el.dataset.main) {
+    const o = +el.dataset.orig, n = +el.value;
+    if (o > 0 && n > 0) document.querySelectorAll('.rv-mod').forEach(x => {
+      if (x === el || x.dataset.main || x.dataset.noscale || x.dataset.manual || x.dataset.orig === '') return;
+      x.value = Math.round(+x.dataset.orig * n / o * 10) / 10;
+    });
+  } else { el.dataset.manual = '1'; el.style.fontWeight = '700'; el.style.color = 'var(--purple)'; }
+}
+function rvCollect(r) {
+  const out = new Map(); let pos = 0;
+  document.querySelectorAll('.rv-mod').forEach(x => {
+    if (x.value === '' || isNaN(+x.value)) { pos++; return; }
+    out.set(x.dataset.key, { ingredient_id: x.dataset.ing, tipo: x.dataset.tipo || null, quantity: +x.value, position: pos++ });
+  });
+  rvReadExtras();
+  state.rv.extra.forEach(x => {
+    if (!x.ing || x.qty === '' || isNaN(+x.qty)) return;
+    const tipo = normalizeTipo(x.ing, x.tipo);
+    out.set(x.ing + '|' + (tipo || ''), { ingredient_id: x.ing, tipo, quantity: +x.qty, position: pos++ });
+  });
+  return [...out.values()];
+}
+async function rvInsertVersion(r, status, rows) {
+  const num = Math.max(0, ...rvVers(r.id).map(v => v.version_number || 0)) + 1;
+  const mainQty = rows.filter(x => x.ingredient_id === r.main_ingredient_id).reduce((s, x) => s + x.quantity, 0) || null;
+  const { data: v, error } = await sb.from('recipe_versions').insert({ recipe_id: r.id, version_number: num, status, is_current: status === 'hero',
+    serves: r.servings || null, main_ingredient_id: r.main_ingredient_id || null, main_ingredient_qty: mainQty,
+    cooked_on: document.getElementById('rv-date')?.value || rvToday(), chef_notes: document.getElementById('rv-notes')?.value || null,
+    instructions: document.getElementById('rv-instr')?.value || null }).select().single();
+  if (error || !v) { toast('Could not save: ' + (error?.message || ''), 'error'); return null; }
+  const { error: e2 } = await sb.from('recipe_ingredients').insert(rows.map(x => ({ ...x, version_id: v.id })));
+  if (e2) { toast('Could not save ingredients: ' + e2.message, 'error'); return null; }
+  return v;
+}
+// Keep only the latest 4 visible; older ones move to the archive (never deleted)
+async function rvTrim(rid) {
+  await loadRecipes();
+  const old = rvVers(rid).filter(v => v.status === 'active').sort((a, b) => b.version_number - a.version_number).slice(RV_WINDOW).map(v => v.id);
+  if (old.length) { await sb.from('recipe_versions').update({ status: 'archived' }).in('id', old); await loadRecipes(); }
+}
+function rvHeader(r, phaseLabel, badge) {
+  return `<div class="page-header">
+    <div><div class="page-title">${r.name} <span class="badge ${badge}" style="vertical-align:middle">${phaseLabel}</span></div>
+      <div class="page-subtitle">${r.category || ''}${r.servings ? ' · serves ' + r.servings : ''}${r.main_ingredient_id ? ' · main: ' + (rvIng(r.main_ingredient_id)?.name || '') : ''}</div></div>
+    <div class="flex gap-2"><button class="btn btn-secondary btn-sm" onclick="rvGo('list')">← All recipes</button>
+      <button class="btn btn-secondary btn-sm" onclick="editRecipe('${r.id}')">Edit details</button></div>
+  </div>`;
+}
+function rvArchiveCard(r) {
+  const a = rvArch(r.id);
+  return `<div class="card"><div class="card-title">Archive (${a.length})</div>${a.length === 0 ? '<div class="text-gray">Nothing archived yet</div>' :
+    a.map(v => `<details style="margin-bottom:0.4rem"><summary style="cursor:pointer">V${v.version_number} · ${v.cooked_on || ''} · ${v.status === 'rejected' ? 'rejected modification' : 'archived version'}${v.chef_notes ? ' — ' + v.chef_notes : ''}</summary>
+      <div class="text-gray" style="padding:0.4rem 1rem">${(v.recipe_ingredients || []).map(ri => (rvIng(ri.ingredient_id)?.name || '?') + (ri.tipo ? ' · ' + ri.tipo : '') + ': ' + rvFmt(+ri.quantity)).join(' · ')}</div></details>`).join('')}</div>`;
+}
+function rvInstrBlock(src, r) {
+  return `<div class="card"><div class="field"><label>Instructions (edit here to change them in the next version)</label>
+    <textarea id="rv-instr" style="min-height:120px">${(src?.instructions ?? r.instructions) || ''}</textarea></div></div>`;
+}
+function rvAddLine() { rvReadExtras(); state.rv.extra.push({ ing: '', tipo: '', qty: '' }); rvKeepMods(() => recipesPage()); }
+// Re-render without losing what was typed in the Modification column
+function rvKeepMods(fn) {
+  const vals = {}; document.querySelectorAll('.rv-mod').forEach(x => vals[x.dataset.key] = { v: x.value, m: x.dataset.manual });
+  const notes = document.getElementById('rv-notes')?.value, instr = document.getElementById('rv-instr')?.value, date = document.getElementById('rv-date')?.value;
+  fn();
+  document.querySelectorAll('.rv-mod').forEach(x => { const s = vals[x.dataset.key]; if (s) { x.value = s.v; if (s.m) { x.dataset.manual = '1'; x.style.fontWeight = '700'; x.style.color = 'var(--purple)'; } } });
+  if (notes !== undefined && document.getElementById('rv-notes')) document.getElementById('rv-notes').value = notes;
+  if (instr !== undefined && document.getElementById('rv-instr')) document.getElementById('rv-instr').value = instr;
+  if (date && document.getElementById('rv-date')) document.getElementById('rv-date').value = date;
+}
+
+// ── 2 · Testing layout ─────────────────────────────────────────────────────────
+function rvTestPage(r) {
+  const base = rvBase(r.id), win = rvWin(r.id), cols = win.slice().reverse(), latest = win[0] || base;
+  const rows = rvRows([base, ...cols]);
+  const shown = [base, ...cols];
+  const mod = rvModCells(rows, latest, r);
+  const changed = (v, prev, key) => prev && rvQty(prev, key) !== rvQty(v, key);
+  const m = document.getElementById('main-content');
+  m.innerHTML = `${rvHeader(r, 'Testing', 'badge-purple')}
+    <div class="card">
+      <table class="tbl"><thead><tr>
+        <th style="min-width:160px">Ingredient</th>
+        <th>Base<div style="font-weight:400;font-size:0.7rem">${base?.cooked_on || ''}</div></th>
+        ${cols.map(v => `<th>V${v.version_number}<div style="font-weight:400;font-size:0.7rem">${v.cooked_on || ''}</div>
+          <button class="btn btn-teal btn-sm" style="margin-top:4px" onclick="rvSetHero('${r.id}','${v.id}')">★ Set Hero</button></th>`).join('')}
+        <th style="background:#b45309;min-width:110px">Modification<div><input id="rv-date" type="date" value="${rvToday()}" style="font-size:0.7rem;padding:2px;margin-top:4px"></div></th>
+      </tr></thead><tbody>
+        ${rows.map((row, i) => `<tr><td>${rvLabel(row)}</td>
+          ${shown.map((v, k) => `<td${k && changed(v, shown[k - 1], row.key) ? ' style="font-weight:700;color:var(--purple)"' : ''}>${rvFmt(rvQty(v, row.key))}</td>`).join('')}
+          ${mod[i]}</tr>`).join('')}
+        ${rvExtraRows(1 + shown.length)}
+        <tr><td class="text-gray">Chef notes</td>${shown.map(v => `<td class="text-gray" style="font-size:0.75rem">${v?.chef_notes || ''}</td>`).join('')}
+          <td><input id="rv-notes" placeholder="What changed and why" style="width:100%"></td></tr>
+        <tr><td class="text-gray">Est. cost</td>${shown.map(v => `<td class="text-gray">${rvCost(v)}</td>`).join('')}<td></td></tr>
+      </tbody></table>
+      <div class="flex gap-2" style="margin-top:0.75rem;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="rvAddLine()">+ Add line</button>
+        <button class="btn btn-secondary btn-sm" onclick="rvNewIngredient()">+ New ingredient</button>
+        <button class="btn btn-primary" onclick="rvSaveTest('${r.id}')">Save as tested version</button>
+        <span class="text-gray" style="align-self:center;font-size:0.75rem">Changing the main ingredient rescales the other lines. To drop an ingredient, set it to 0.</span>
+      </div>
+    </div>
+    ${rvInstrBlock(latest, r)}
+    ${rvArchiveCard(r)}`;
+  rvInitExtras();
+}
+async function rvSaveTest(rid) {
+  const r = state.recipes.find(x => x.id === rid);
+  const rows = rvCollect(r);
+  if (!rows.length) return toast('Enter at least one quantity', 'error');
+  const v = await rvInsertVersion(r, 'active', rows);
+  if (!v) return;
+  await rvTrim(rid);
+  toast('Tested version saved', 'success');
+  rvGo('recipe', rid);
+}
+async function rvSetHero(rid, vid) {
+  const v = state.versions.find(x => x.id === vid);
+  if (!confirm(`Set V${v.version_number} as the Hero and move this recipe to Production?`)) return;
+  await sb.from('recipe_versions').update({ is_current: false }).eq('recipe_id', rid);
+  await sb.from('recipe_versions').update({ status: 'hero', is_current: true }).eq('id', vid);
+  await sb.from('recipes').update({ phase: 'production' }).eq('id', rid);
+  await loadRecipes();
+  toast('Hero set — recipe is in Production', 'success');
+  rvGo('recipe', rid);
+}
+
+// ── 3 · Production layout ──────────────────────────────────────────────────────
+function rvProdPage(r) {
+  const hero = rvHero(r.id), pend = rvPend(r.id), win = rvWin(r.id);
+  const prev = state.rv.showPrev ? win.slice().reverse() : [];
+  const rows = rvRows([hero, ...prev, pend]);
+  const mod = rvModCells(rows, pend || hero, r);
+  const baseServ = hero.serves || r.servings || '';
+  const m = document.getElementById('main-content');
+  m.innerHTML = `${rvHeader(r, 'Production', 'badge-teal')}
+    ${state.rv.ask ? `<div class="card" style="background:#fef3c7;border:1px solid #f59e0b">
+      <strong>Make this modification the new Hero?</strong>
+      <div class="flex gap-2" style="margin-top:0.5rem"><button class="btn btn-primary btn-sm" onclick="rvConfirmHero('${r.id}')">Yes, make it Hero</button>
+      <button class="btn btn-secondary btn-sm" onclick="state.rv.ask=false;recipesPage()">Not yet — keep it pending</button></div></div>` : ''}
+    <div class="card">
+      <div class="flex gap-2" style="align-items:center;flex-wrap:wrap">
+        <strong style="font-size:0.85rem">Scale for production:</strong>
+        <select id="rv-scale-by" onchange="state.rv.scaleBy=this.value;rvScale('${r.id}')" style="width:auto">
+          <option value="servings"${state.rv.scaleBy === 'servings' ? ' selected' : ''}>by servings (Hero: ${baseServ || '?'})</option>
+          ${r.main_ingredient_id ? `<option value="main"${state.rv.scaleBy === 'main' ? ' selected' : ''}>by ${rvIng(r.main_ingredient_id)?.name || 'main ingredient'} qty</option>` : ''}
+        </select>
+        <input id="rv-scale-val" type="number" min="0" step="any" style="width:110px" value="${state.rv.scaleVal}" placeholder="new value" oninput="state.rv.scaleVal=this.value;rvScale('${r.id}')">
+        <span class="text-gray" id="rv-scale-msg" style="font-size:0.75rem"></span>
+      </div>
+    </div>
+    <div class="card">
+      <table class="tbl"><thead><tr>
+        <th style="min-width:160px">Ingredient</th>
+        ${prev.map(v => `<th style="background:var(--gray-dk)">V${v.version_number}<div style="font-weight:400;font-size:0.7rem">${v.cooked_on || ''}</div></th>`).join('')}
+        <th style="background:var(--teal)">★ Hero V${hero.version_number}<div style="font-weight:400;font-size:0.7rem">${hero.cooked_on || ''}</div></th>
+        <th style="background:var(--teal)">Scaled</th>
+        <th style="background:#b45309;min-width:110px">Modification${pend ? ' <span style="font-weight:400">(pending V' + pend.version_number + ')</span>' : ''}
+          <div><input id="rv-date" type="date" value="${pend?.cooked_on || rvToday()}" style="font-size:0.7rem;padding:2px;margin-top:4px"></div></th>
+      </tr></thead><tbody>
+        ${rows.map((row, i) => `<tr><td>${rvLabel(row)}</td>
+          ${prev.map(v => `<td class="text-gray">${rvFmt(rvQty(v, row.key))}</td>`).join('')}
+          <td style="background:var(--teal-lt);font-weight:600">${rvFmt(rvQty(hero, row.key))}</td>
+          <td class="rv-scaled" data-q="${rvQty(hero, row.key) ?? ''}" data-ns="${rvIng(row.ingredient_id)?.no_autoscale ? 1 : ''}">—</td>
+          ${mod[i]}</tr>`).join('')}
+        ${rvExtraRows(3 + prev.length)}
+        <tr><td class="text-gray">Chef notes</td>${prev.map(v => `<td class="text-gray" style="font-size:0.75rem">${v.chef_notes || ''}</td>`).join('')}
+          <td class="text-gray" style="font-size:0.75rem">${hero.chef_notes || ''}</td><td></td>
+          <td><input id="rv-notes" style="width:100%" placeholder="What changed and why" value="${pend?.chef_notes || ''}"></td></tr>
+        <tr><td class="text-gray">Est. cost</td>${prev.map(v => `<td class="text-gray">${rvCost(v)}</td>`).join('')}<td>${rvCost(hero)}</td><td></td><td class="text-gray">${pend ? rvCost(pend) : ''}</td></tr>
+      </tbody></table>
+      <div class="flex gap-2" style="margin-top:0.75rem;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="rvSaveProd('${r.id}')">Save modification</button>
+        ${pend ? `<button class="btn btn-teal btn-sm" onclick="rvConfirmHero('${r.id}')">Confirm as Hero</button>
+          <button class="btn btn-secondary btn-sm" onclick="rvDismiss('${r.id}')">Dismiss</button>` : ''}
+        <button class="btn btn-secondary btn-sm" onclick="rvAddLine()">+ Add line</button>
+        <button class="btn btn-secondary btn-sm" onclick="rvKeepMods(()=>{state.rv.showPrev=!state.rv.showPrev;recipesPage()})">${state.rv.showPrev ? 'Hide' : 'Show'} last ${RV_WINDOW} versions</button>
+        <button class="btn btn-secondary btn-sm" onclick="rvBackToTesting('${r.id}')">← Back to Testing</button>
+      </div>
+    </div>
+    ${rvInstrBlock(pend || hero, r)}
+    ${rvArchiveCard(r)}`;
+  rvInitExtras();
+  rvScale(r.id);
+}
+function rvScale(rid) {
+  const r = state.recipes.find(x => x.id === rid), hero = rvHero(rid);
+  const val = +state.rv.scaleVal; let f = null, msg = '';
+  if (val > 0) {
+    if (state.rv.scaleBy === 'main') { const mq = rvVersMain(hero, r); if (mq > 0) f = val / mq; else msg = 'Hero has no main-ingredient quantity'; }
+    else { const s = hero.serves || r.servings; if (s > 0) f = val / s; else msg = 'Set servings in Edit details to scale by servings'; }
+  }
+  document.querySelectorAll('.rv-scaled').forEach(td => {
+    const q = td.dataset.q === '' ? null : +td.dataset.q;
+    td.textContent = (f && q !== null) ? (td.dataset.ns ? rvFmt(q) + ' (fixed)' : rvFmt(q * f)) : '—';
+  });
+  const el = document.getElementById('rv-scale-msg'); if (el) el.textContent = f ? '× ' + (Math.round(f * 100) / 100) : msg;
+}
+function rvVersMain(v, r) { return (v?.recipe_ingredients || []).filter(x => x.ingredient_id === r.main_ingredient_id).reduce((s, x) => s + +x.quantity, 0); }
+async function rvSaveProd(rid) {
+  const r = state.recipes.find(x => x.id === rid);
+  const rows = rvCollect(r);
+  if (!rows.length) return toast('Enter at least one quantity', 'error');
+  const pend = rvPend(rid);
+  if (pend) {
+    // One pending modification at a time — update it in place
+    const mainQty = rows.filter(x => x.ingredient_id === r.main_ingredient_id).reduce((s, x) => s + x.quantity, 0) || null;
+    await sb.from('recipe_versions').update({ cooked_on: document.getElementById('rv-date')?.value || rvToday(), chef_notes: document.getElementById('rv-notes')?.value || null,
+      instructions: document.getElementById('rv-instr')?.value || null, main_ingredient_qty: mainQty }).eq('id', pend.id);
+    await sb.from('recipe_ingredients').delete().eq('version_id', pend.id);
+    const { error } = await sb.from('recipe_ingredients').insert(rows.map(x => ({ ...x, version_id: pend.id })));
+    if (error) return toast('Could not save: ' + error.message, 'error');
+  } else if (!await rvInsertVersion(r, 'pending', rows)) return;
+  await loadRecipes();
+  state.rv.extra = []; state.rv.ask = true;
+  recipesPage(); window.scrollTo(0, 0);
+}
+async function rvConfirmHero(rid) {
+  const hero = rvHero(rid), pend = rvPend(rid);
+  if (!pend) return;
+  if (hero) await sb.from('recipe_versions').update({ status: 'active', is_current: false }).eq('id', hero.id);
+  await sb.from('recipe_versions').update({ status: 'hero', is_current: true }).eq('id', pend.id);
+  await rvTrim(rid);
+  toast(`V${pend.version_number} is the new Hero`, 'success');
+  rvGo('recipe', rid);
+}
+async function rvDismiss(rid) {
+  const pend = rvPend(rid); if (!pend) return;
+  if (!confirm('Dismiss this modification? It will be kept in the archive as rejected.')) return;
+  await sb.from('recipe_versions').update({ status: 'rejected' }).eq('id', pend.id);
+  await loadRecipes();
+  toast('Modification archived as rejected');
+  rvGo('recipe', rid);
+}
+async function rvBackToTesting(rid) {
+  if (!confirm('Send this recipe back to Testing for rework? The current Hero becomes the latest tested version.')) return;
+  const hero = rvHero(rid), pend = rvPend(rid);
+  if (pend) await sb.from('recipe_versions').update({ status: 'rejected' }).eq('id', pend.id);
+  if (hero) await sb.from('recipe_versions').update({ status: 'active', is_current: false }).eq('id', hero.id);
+  await sb.from('recipes').update({ phase: 'testing' }).eq('id', rid);
+  await rvTrim(rid);
+  toast('Recipe is back in Testing');
+  rvGo('recipe', rid);
 }
 
 function calcVersionCost(ver) {
@@ -1475,7 +1842,7 @@ async function saveVersion() {
   // Archive oldest if we already have 4
   if (existingVers.length >= 4) {
     const oldest = existingVers[existingVers.length - 1];
-    await sb.from('recipe_versions').delete().eq('id', oldest.id);
+    await sb.from('recipe_versions').update({ status: 'archived' }).eq('id', oldest.id);
   }
 
   const { data: newVer, error } = await sb.from('recipe_versions').insert({
