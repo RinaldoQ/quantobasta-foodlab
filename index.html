@@ -396,15 +396,23 @@
     <div class="form-grid">
       <div class="field field-span2"><label>Ingredient Name *</label><input id="i-name" placeholder="e.g. Yellow Onion, Trota, White Wine Vinegar" autocomplete="off" oninput="showSimilar('i')"><div class="similar-hint" id="i-similar"></div></div>
       <div class="field"><label>Unit *</label>
-        <select id="i-unit">
+        <select id="i-unit" onchange="ingPieceUnitLabel()">
           <option value="g">g (grams)</option>
           <option value="ml">ml (millilitres)</option>
-          <option value="units">units (each)</option>
-          <option value="qb">qb (quanto basta)</option>
-          <option value="bottle">bottle</option>
-          <option value="bunch">bunch</option>
         </select>
-        <div class="text-gray" style="font-size:0.72rem;margin-top:3px">Weights in g, liquids in ml. Buying in kg, litres, lb or oz? Enter that on the Prices page — it converts automatically.</div>
+        <div class="text-gray" style="font-size:0.72rem;margin-top:3px">Solids in g, liquids in ml. Buying in kg, litres, lb or oz? Enter that on the Prices page — it converts automatically.</div>
+      </div>
+      <div class="field field-span2" id="i-convert-box" style="display:none;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:0.6rem">
+        <strong>Convert this ingredient to g or ml.</strong>
+        <div style="font-size:0.8rem;margin-top:3px">It is currently measured in "<span id="i-old-unit"></span>". Choose g or ml above and enter below what 1 <span id="i-old-unit2"></span> weighs (an estimate is fine — it becomes the house standard).
+        All recipe quantities, inventory and prices for this ingredient are converted in one step.</div>
+      </div>
+      <div class="field"><label>Bought by the piece? (optional)</label>
+        <input id="i-piece-name" list="i-piece-list" placeholder="bunch, each, bottle, can, jar…" autocomplete="off">
+        <datalist id="i-piece-list"><option value="each"><option value="bunch"><option value="bottle"><option value="can"><option value="jar"><option value="package"><option value="head"><option value="clove"></datalist>
+      </div>
+      <div class="field"><label>One piece = (house standard)</label>
+        <div style="display:flex;gap:0.4rem;align-items:center"><input id="i-piece-qty" type="number" step="any" min="0" placeholder="e.g. 40"><span id="i-piece-unit" class="text-gray">g</span></div>
       </div>
       <div class="field"><label>Category</label>
         <select id="i-category">
@@ -469,17 +477,14 @@
         <input id="p-package-qty" type="number" step="0.001" min="0" placeholder="e.g. 500" oninput="calcPricePerUnit()">
       </div>
       <div class="field"><label>Package Unit *</label>
-        <select id="p-package-unit">
+        <select id="p-package-unit" onchange="calcPricePerUnit()">
           <option value="g">g (grams)</option>
-          <option value="ml">ml (millilitres)</option>
           <option value="kg">kg (→ converts to g)</option>
-          <option value="l">litre (→ converts to ml)</option>
-          <option value="units">units (each)</option>
-          <option value="bottle">bottle</option>
-          <option value="bunch">bunch</option>
-          <option value="qb">qb (quanto basta)</option>
           <option value="lb">lb (pound → converts to g)</option>
           <option value="oz">oz (ounce → converts to g)</option>
+          <option value="ml">ml (millilitres)</option>
+          <option value="l">litre (→ converts to ml)</option>
+          <option value="piece" id="p-piece-opt">per piece</option>
         </select>
       </div>
       <div class="field field-span2" style="background:var(--teal-lt);padding:0.65rem;border-radius:6px">
@@ -904,6 +909,10 @@ function ingredientsPage(filter='') {
       <div><div class="page-title">Ingredients</div><div class="page-subtitle">Master ingredient list</div></div>
       <button class="btn btn-primary" onclick="openIngModal()">+ Add Ingredient</button>
     </div>
+    ${state.ingredients.filter(LEGACY_UNIT).length ? `<div class="card" style="background:#fef3c7;border:1px solid #f59e0b">
+      <strong>${state.ingredients.filter(LEGACY_UNIT).length} ingredient(s) still use descriptive units.</strong> Click Convert and enter what one piece weighs:
+      <div class="flex gap-2" style="flex-wrap:wrap;margin-top:0.5rem">${state.ingredients.filter(LEGACY_UNIT).map(i =>
+        `<button class="btn btn-secondary btn-sm" onclick="editIngredient('${i.id}')">Convert ${i.name} (${i.unit})</button>`).join('')}</div></div>` : ''}
     <div class="card">
       <div style="margin-bottom:0.75rem">
         <input type="text" placeholder="🔍 Search ingredients…" value="${filter}"
@@ -923,11 +932,11 @@ function ingredientsPage(filter='') {
             : filtered.map(i => `
                 <tr>
                   <td><strong>${i.name}</strong>${i.notes ? `<div class="text-gray">${i.notes}</div>` : ''}</td>
-                  <td><span class="badge badge-gray">${i.unit}</span></td>
+                  <td><span class="badge ${LEGACY_UNIT(i) ? '' : 'badge-gray'}" ${LEGACY_UNIT(i) ? 'style="background:#fef3c7;color:#92400e"' : ''}>${i.unit}${LEGACY_UNIT(i) ? ' ⚠️' : ''}</span>${i.piece_name ? `<div class="text-gray" style="font-size:0.72rem">1 ${i.piece_name} = ${+i.piece_qty} ${i.unit}</div>` : ''}</td>
                   <td>${i.category || '—'}</td>
                   <td>${i.no_autoscale ? '⚠️ manual' : '✓ auto'}</td>
                   <td>
-                    <button class="btn btn-secondary btn-sm" onclick="editIngredient('${i.id}')">Edit</button>
+                    <button class="btn btn-secondary btn-sm" onclick="editIngredient('${i.id}')">${LEGACY_UNIT(i) ? 'Convert' : 'Edit'}</button>
                     <button class="btn btn-danger btn-sm" onclick="deleteIngredient('${i.id}')">Delete</button>
                   </td>
                 </tr>`).join('')
@@ -942,7 +951,13 @@ function openIngModal(id) {
   const i = id ? state.ingredients.find(x => x.id === id) : null;
   document.getElementById('ing-modal-title').textContent = id ? 'Edit Ingredient' : 'Add Ingredient';
   document.getElementById('i-name').value = i?.name || '';
-  document.getElementById('i-unit').value = i?.unit || 'g';
+  const legacy = i && !['g', 'ml'].includes(i.unit);
+  document.getElementById('i-unit').value = legacy ? 'g' : (i?.unit || 'g');
+  document.getElementById('i-convert-box').style.display = legacy ? 'block' : 'none';
+  document.getElementById('i-old-unit').textContent = document.getElementById('i-old-unit2').textContent = legacy ? i.unit : '';
+  document.getElementById('i-piece-name').value = legacy ? ({ units: 'each', qb: '' }[i.unit] ?? i.unit) : (i?.piece_name || '');
+  document.getElementById('i-piece-qty').value = i?.piece_qty || '';
+  ingPieceUnitLabel();
   document.getElementById('i-category').value = i?.category || '';
   document.getElementById('i-noscale').checked = i?.no_autoscale || false;
   document.getElementById('i-notes').value = i?.notes || '';
@@ -950,21 +965,45 @@ function openIngModal(id) {
   openModal('modal-ingredient');
 }
 function editIngredient(id) { openIngModal(id); }
+function ingPieceUnitLabel() { const u = document.getElementById('i-unit')?.value || 'g'; const el = document.getElementById('i-piece-unit'); if (el) el.textContent = u; }
+const LEGACY_UNIT = i => !['g', 'ml'].includes(i.unit);
 
 async function saveIngredient() {
   const name = document.getElementById('i-name').value.trim();
   if (!name) return toast('Ingredient name is required', 'error');
   if (!confirmNotDuplicate('i', name)) return;
+  const unit = document.getElementById('i-unit').value;
+  const pieceName = document.getElementById('i-piece-name').value.trim() || null;
+  const pieceQty = parseFloat(document.getElementById('i-piece-qty').value) || null;
+  const old = state.editId ? state.ingredients.find(x => x.id === state.editId) : null;
+  const legacy = old && !['g', 'ml'].includes(old.unit);
+  if (pieceName && !pieceQty) return toast(`Enter what one ${pieceName} weighs`, 'error');
+  if (legacy && !pieceQty) return toast(`Enter what 1 ${old.unit} weighs to convert this ingredient`, 'error');
   const data = {
     name,
-    unit: document.getElementById('i-unit').value,
+    unit,
+    piece_name: pieceName,
+    piece_qty: pieceName ? pieceQty : null,
     category: document.getElementById('i-category').value,
     no_autoscale: document.getElementById('i-noscale').checked,
     notes: document.getElementById('i-notes').value,
   };
   if (state.editId) {
-    await sb.from('ingredients').update(data).eq('id', state.editId);
-    toast('Ingredient updated', 'success');
+    if (legacy) {
+      // One database step converts recipes, inventory, shopping list and prices for this ingredient
+      const { error } = await sb.rpc('convert_ingredient_unit', { p_ing: state.editId, p_unit: unit, p_k: pieceQty, p_piece: pieceName || '' });
+      if (error) return toast('Could not convert: ' + error.message, 'error');
+    }
+    const { error } = await sb.from('ingredients').update(data).eq('id', state.editId);
+    if (error) return toast('Could not save: ' + error.message, 'error');
+    // Piece weight changed → recalculate prices bought by the piece
+    if (!legacy && old && pieceQty && pieceQty !== +old.piece_qty) {
+      for (const p of state.prices.filter(p => p.ingredient_id === state.editId && p.package_unit === 'piece' && p.purchase_price && p.package_qty > 0))
+        await sb.from('vendor_prices').update({ price_per_unit: p.purchase_price / (p.package_qty * pieceQty) }).eq('id', p.id);
+      await loadPrices();
+    }
+    if (legacy) { await loadPrices(); if (typeof loadRecipes === 'function') await loadRecipes(); }
+    toast(legacy ? `Converted to ${unit} — recipes and prices updated` : 'Ingredient updated', 'success');
   } else {
     await sb.from('ingredients').insert(data);
     toast('Ingredient added', 'success');
@@ -1024,9 +1063,9 @@ function pricesPage(filter='') {
                   <td>${p.tipo || '<span class="text-gray">—</span>'}</td>
                   <td>${p.vendors?.name || '—'}</td>
                   <td><strong>${p.brand || '—'}</strong></td>
-                  <td class="text-gray">${p.package_qty ? p.package_qty + ' ' + (p.package_unit || '') : '—'}</td>
+                  <td class="text-gray">${p.package_qty ? p.package_qty + ' ' + (p.package_unit === 'piece' ? (rvIng(p.ingredient_id)?.piece_name || 'piece') : (p.package_unit || '')) : '—'}</td>
                   <td class="qty-cell">${p.purchase_price ? '$' + parseFloat(p.purchase_price).toFixed(2) : '—'}</td>
-                  <td class="qty-cell">${p.price_per_unit ? '$' + parseFloat(p.price_per_unit).toFixed(4) + '/' + baseUnitOf(p.package_unit) : '—'}${p.ingredients?.unit && p.package_unit && unitFamily(p.ingredients.unit) !== unitFamily(p.package_unit) ? ` <span title="Price unit (${p.package_unit}) doesn't match the ingredient (${p.ingredients.unit}) — recipe costs will be wrong" style="cursor:help">⚠️</span>` : ''}</td>
+                  <td class="qty-cell">${p.price_per_unit ? '$' + parseFloat(p.price_per_unit).toFixed(4) + '/' + (p.package_unit === 'piece' ? (rvIng(p.ingredient_id)?.unit || '') : baseUnitOf(p.package_unit)) : '—'}${rvIng(p.ingredient_id) && p.package_unit && !priceUnitOk(rvIng(p.ingredient_id), p.package_unit) ? ` <span title="Price unit (${p.package_unit}) doesn't match the ingredient (${rvIng(p.ingredient_id).unit}) — recipe costs will be wrong" style="cursor:help">⚠️</span>` : ''}</td>
                   <td class="text-gray">${p.price_date || '—'}</td>
                   <td>${p.is_active ? '<span class="badge badge-teal">Active</span>' : '<span class="badge badge-gray">Inactive</span>'}</td>
                   <td class="text-gray">${p.notes || '—'}</td>
@@ -1054,11 +1093,15 @@ function calcPricePerUnit() {
     else if (unit === "oz") { qtyInBase = qty * 28.3495; baseUnit = "g"; convNote = " (" + qty + "oz = " + qtyInBase.toFixed(1) + "g)"; }
     else if (unit === "kg") { qtyInBase = qty * 1000; baseUnit = "g"; convNote = " (" + qty + "kg = " + qtyInBase + "g)"; }
     else if (unit === "l")  { qtyInBase = qty * 1000; baseUnit = "ml"; convNote = " (" + qty + "l = " + qtyInBase + "ml)"; }
-    const ingU = rvIng(document.getElementById('p-ingredient')?.value)?.unit;
-    if (ingU && unitFamily(ingU) !== unitFamily(unit)) convNote += "<br><strong style='color:#b45309'>⚠ This ingredient is measured in " + ingU + " — recipe costs will be wrong with this unit.</strong>";
+    const ing = rvIng(document.getElementById('p-ingredient')?.value);
+    if (unit === "piece") {
+      if (!ing?.piece_qty) { hidden.value = ""; display.innerHTML = "⚠ Set what one piece weighs on this ingredient first (Ingredients → Edit)"; return; }
+      qtyInBase = qty * ing.piece_qty; baseUnit = ing.unit; convNote = " (" + qty + " " + ing.piece_name + " × " + (+ing.piece_qty) + ing.unit + ")";
+    }
+    if (ing && !priceUnitOk(ing, unit)) convNote += "<br><strong style='color:#b45309'>⚠ This ingredient is measured in " + ing.unit + " — recipe costs will be wrong with this unit.</strong>";
     const ppu = purchase / qtyInBase;
     hidden.value = ppu;
-    display.innerHTML = "$" + ppu.toFixed(4) + " per " + baseUnit + convNote + "<br><small style='opacity:0.8'>= $" + purchase.toFixed(2) + " for " + qty + unit + "</small>";
+    display.innerHTML = "$" + ppu.toFixed(4) + " per " + baseUnit + convNote + "<br><small style='opacity:0.8'>= $" + purchase.toFixed(2) + " for " + qty + " " + (unit === "piece" ? (ing?.piece_name || "piece") : unit) + "</small>";
   } else {
     hidden.value = "";
     display.textContent = "— enter price and quantity above";
@@ -1097,9 +1140,11 @@ async function savePrice() {
   const pricePerUnit = parseFloat(document.getElementById('p-price').value);
   if (isNaN(purchasePrice)) return toast('Purchase price is required', 'error');
   if (isNaN(packageQty) || packageQty <= 0) return toast('Package quantity is required', 'error');
-  const ingUnit = rvIng(ingredientId)?.unit, pkgUnit = document.getElementById('p-package-unit').value;
-  if (ingUnit && unitFamily(ingUnit) !== unitFamily(pkgUnit) &&
-      !confirm(`This ingredient is measured in "${ingUnit}" but the price is per "${pkgUnit}". Recipe costs will be wrong. Save anyway?`)) return;
+  const ingObj = rvIng(ingredientId), pkgUnit = document.getElementById('p-package-unit').value;
+  if (pkgUnit === 'piece' && !ingObj?.piece_qty) return toast('Set what one piece weighs on this ingredient first (Ingredients → Edit)', 'error');
+  if (isNaN(pricePerUnit)) return toast('Price per unit could not be calculated', 'error');
+  if (ingObj && !priceUnitOk(ingObj, pkgUnit) &&
+      !confirm(`This ingredient is measured in "${ingObj.unit}" but the price is per "${pkgUnit}". Recipe costs will be wrong. Save anyway?`)) return;
   if (state.editId) {
     await sb.from('vendor_prices').update({
       vendor_id: vendorId,
@@ -1152,6 +1197,8 @@ function refreshTipoOptions() {
   if (!list) return;
   list.innerHTML = ingId ? tiposForIngredient(ingId).map(t => `<option value="${t}">`).join('') : '';
   refreshBrandOptions();
+  refreshPieceOption();
+  if (document.getElementById('p-purchase-price')?.value) calcPricePerUnit();
 }
 
 // Brands: those used for this ingredient first, then every other brand on file
@@ -1352,7 +1399,7 @@ function rvRows(vers) {
 }
 function rvLabel(row, note) {
   const i = rvIng(row.ingredient_id);
-  return `${i ? i.name : '?'}${row.tipo ? ' <span class="text-gray">· ' + rvEsc(row.tipo) + '</span>' : ''} <span class="badge badge-gray">${i ? i.unit : ''}</span>${note
+  return `${i ? i.name : '?'}${i && !['g', 'ml'].includes(i.unit) ? ' <span title="Still in a descriptive unit — convert it on the Ingredients page" style="cursor:help">⚠️</span>' : ''}${row.tipo ? ' <span class="text-gray">· ' + rvEsc(row.tipo) + '</span>' : ''} <span class="badge badge-gray">${i ? i.unit : ''}</span>${note
     ? ` <span class="rv-note-icon" title="${rvEsc(note)}" onclick="toast(this.title)">📝</span>` : ''}`;
 }
 function rvIngOptions(sel) {
@@ -1974,6 +2021,12 @@ async function rvBackToTesting(rid) {
   rvGo('recipe', rid);
 }
 
+function priceUnitOk(ing, u) { return u === 'piece' ? !!ing?.piece_qty : unitFamily(ing?.unit) === unitFamily(u); }
+function refreshPieceOption() {
+  const opt = document.getElementById('p-piece-opt'); if (!opt) return;
+  const ing = rvIng(document.getElementById('p-ingredient')?.value);
+  opt.textContent = ing?.piece_qty ? `per ${ing.piece_name} (1 = ${+ing.piece_qty} ${ing.unit})` : 'per piece (set piece weight on the ingredient first)';
+}
 function unitFamily(u) { return ({ g: 'g', kg: 'g', lb: 'g', oz: 'g', ml: 'ml', l: 'ml' })[u] || u; }
 function baseUnitOf(u) { return ({ kg: 'g', lb: 'g', oz: 'g', l: 'ml' })[u] || u || 'unit'; }
 
